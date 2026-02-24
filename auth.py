@@ -121,21 +121,17 @@ def show_login_page():
     st.divider()
 
     # ブラウザのパスワード自動生成を抑制するJSを注入
-    st.html("""
+    st.markdown("""
     <script>
-    // ログインフォームのパスワード欄に autocomplete="current-password" を設定
     const observer = new MutationObserver(() => {
         document.querySelectorAll('input[type="password"]').forEach((el, i) => {
-            if (i === 0) {
-                el.setAttribute('autocomplete', 'current-password');
-            } else {
-                el.setAttribute('autocomplete', 'new-password');
-            }
+            if (i === 0) el.setAttribute('autocomplete', 'current-password');
+            else el.setAttribute('autocomplete', 'new-password');
         });
     });
     observer.observe(document.body, {childList: true, subtree: true});
     </script>
-    """)
+    """, unsafe_allow_html=True)
 
     # ログイン / 新規登録 の切り替え
     if 'auth_mode' not in st.session_state:
