@@ -120,11 +120,43 @@ def show_login_page():
     st.caption("くじらキャピタル株式会社")
     st.divider()
 
-    # タブでログイン / 新規登録を切り替え
-    tab_login, tab_signup = st.tabs(["ログイン", "新規アカウント作成"])
+    # ブラウザのパスワード自動生成を抑制するJSを注入
+    st.html("""
+    <script>
+    // ログインフォームのパスワード欄に autocomplete="current-password" を設定
+    const observer = new MutationObserver(() => {
+        document.querySelectorAll('input[type="password"]').forEach((el, i) => {
+            if (i === 0) {
+                el.setAttribute('autocomplete', 'current-password');
+            } else {
+                el.setAttribute('autocomplete', 'new-password');
+            }
+        });
+    });
+    observer.observe(document.body, {childList: true, subtree: true});
+    </script>
+    """)
 
-    # --- ログインタブ ---
-    with tab_login:
+    # ログイン / 新規登録 の切り替え
+    if 'auth_mode' not in st.session_state:
+        st.session_state.auth_mode = 'login'
+
+    col_l, col_r = st.columns(2)
+    with col_l:
+        if st.button("ログイン", use_container_width=True,
+                      type="primary" if st.session_state.auth_mode == 'login' else "secondary"):
+            st.session_state.auth_mode = 'login'
+            st.rerun()
+    with col_r:
+        if st.button("新規アカウント作成", use_container_width=True,
+                      type="primary" if st.session_state.auth_mode == 'signup' else "secondary"):
+            st.session_state.auth_mode = 'signup'
+            st.rerun()
+
+    st.markdown("")
+
+    # --- ログインモード ---
+    if st.session_state.auth_mode == 'login':
         with st.form("login_form"):
             email = st.text_input("メールアドレス", placeholder="you@example.com", key="login_email")
             password = st.text_input("パスワード", type="password", key="login_password")
@@ -142,8 +174,8 @@ def show_login_page():
                 else:
                     st.error(result['error'])
 
-    # --- サインアップタブ ---
-    with tab_signup:
+    # --- サインアップモード ---
+    else:
         with st.form("signup_form"):
             new_email = st.text_input("メールアドレス", placeholder="you@example.com", key="signup_email")
             new_password = st.text_input("パスワード（6文字以上）", type="password", key="signup_password")
