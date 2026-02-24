@@ -146,20 +146,31 @@ def process_company(code_4, search_days, progress_container):
         'stock_raw': None,
     }
 
-    # Step 1: EDINET
-    progress_container.text(f"  📄 {code_4}: EDINET検索中...")
+    # Step 1: EDINET（API Key がある場合のみ）
+    edinet_available = False
     try:
-        edinet_data = fetch_company_financials(code_4, days=search_days)
-        result['edinet_raw'] = edinet_data
-    except Exception as e:
-        result['errors'].append(f"EDINET: {e}")
-        edinet_data = {
-            'company_name': '',
-            'yuho_data': {},
-            'hanki_data': {},
-            'yuho_doc': None,
-            'hanki_doc': None,
-        }
+        load_api_key()
+        edinet_available = True
+    except RuntimeError:
+        pass
+
+    edinet_data = {
+        'company_name': '',
+        'yuho_data': {},
+        'hanki_data': {},
+        'yuho_doc': None,
+        'hanki_doc': None,
+    }
+
+    if edinet_available:
+        progress_container.text(f"  📄 {code_4}: EDINET検索中...")
+        try:
+            edinet_data = fetch_company_financials(code_4, days=search_days)
+            result['edinet_raw'] = edinet_data
+        except Exception as e:
+            result['errors'].append(f"EDINET: {e}")
+    else:
+        result['errors'].append("EDINET: API Key未設定（スキップ）")
 
     # Step 2: TDnet
     progress_container.text(f"  📰 {code_4}: TDnet決算短信検索中...")
@@ -199,13 +210,16 @@ if generate_btn:
     if not codes:
         st.error("証券コードを入力してください。")
     else:
-        # API Key チェック
+        # EDINET API Key チェック（なくても株価取得は可能）
+        edinet_available = False
         try:
             load_api_key()
-        except RuntimeError as e:
-            st.error(str(e))
-            st.info("左サイドバーに EDINET API Key を入力してください。")
-            st.stop()
+            edinet_available = True
+        except RuntimeError:
+            pass
+
+        if not edinet_available:
+            st.warning("EDINET API Key が未設定のため、財務データ（P&L/BS）は自動取得できません。株価のみ取得し、その他は手動入力で補完できます。")
 
         st.session_state.company_data = []
         st.session_state.errors = []
@@ -228,7 +242,7 @@ if generate_btn:
                     st.session_state.errors.append(f"{code}: {err}")
 
         progress_bar.progress(1.0)
-        status_container.success(f"完了: {len(codes)}社の処理が終わりました。")
+        status_container.success(f"✅ 完了: {len(codes)}社の処理が終わりました。下にスクロールして結果を確認してください。")
         progress_text.empty()
 
         st.session_state.company_data = results
