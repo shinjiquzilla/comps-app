@@ -258,6 +258,37 @@ if st.session_state.generation_done:
             for err in st.session_state.errors:
                 st.warning(err)
 
+    # デバッグ情報
+    with st.expander("🔍 デバッグ: 取得データ詳細", expanded=False):
+        for r in st.session_state.company_data:
+            code = r.get('code', '?')
+            st.markdown(f"**{code}** (status: {r.get('status', '?')})")
+            if r.get('edinet_raw'):
+                ed = r['edinet_raw']
+                st.json({
+                    'company_name': ed.get('company_name', ''),
+                    'yuho_data': ed.get('yuho_data', {}),
+                    'hanki_data': ed.get('hanki_data', {}),
+                    'yuho_doc_id': ed.get('yuho_doc', {}).get('docID') if ed.get('yuho_doc') else None,
+                    'hanki_doc_id': ed.get('hanki_doc', {}).get('docID') if ed.get('hanki_doc') else None,
+                })
+            else:
+                st.text("EDINET: データなし")
+            if r.get('tdnet_raw'):
+                td = r['tdnet_raw']
+                st.json({
+                    'forecast': td.get('forecast', {}),
+                    'tanshin_count': len(td.get('tanshin_items', [])),
+                    'target': td.get('target_tanshin', {}).get('title') if td.get('target_tanshin') else None,
+                })
+            else:
+                st.text("TDnet: データなし")
+            if r.get('stock_raw'):
+                st.json(r['stock_raw'])
+            else:
+                st.text("株価: データなし")
+            st.divider()
+
     companies_for_config = []
     for r in st.session_state.company_data:
         if r.get('data'):
