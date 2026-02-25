@@ -271,6 +271,7 @@ if st.session_state.generation_done:
                     'hanki_data': ed.get('hanki_data', {}),
                     'yuho_doc_id': ed.get('yuho_doc', {}).get('docID') if ed.get('yuho_doc') else None,
                     'hanki_doc_id': ed.get('hanki_doc', {}).get('docID') if ed.get('hanki_doc') else None,
+                    '_debug': ed.get('_debug', {}),
                 })
             else:
                 st.text("EDINET: データなし")

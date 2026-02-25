@@ -370,11 +370,15 @@ def fetch_company_financials(code_4, days=400, progress_callback=None):
     }
 
     # 有報 type=5 CSV
+    debug_info = {}
     if 'yuho' in classified:
         doc_id = classified['yuho'].get('docID', '')
         if doc_id:
             zip_bytes = download_csv_zip(session, api_key, doc_id)
             time.sleep(1)
+            lines = parse_csv_lines(zip_bytes)
+            debug_info['yuho_zip_size'] = len(zip_bytes)
+            debug_info['yuho_csv_lines'] = len(lines)
             result['yuho_data'] = extract_financial_data(zip_bytes)
 
     # 半期報告書 type=5 CSV
@@ -383,6 +387,10 @@ def fetch_company_financials(code_4, days=400, progress_callback=None):
         if doc_id:
             zip_bytes = download_csv_zip(session, api_key, doc_id)
             time.sleep(1)
+            lines = parse_csv_lines(zip_bytes)
+            debug_info['hanki_zip_size'] = len(zip_bytes)
+            debug_info['hanki_csv_lines'] = len(lines)
             result['hanki_data'] = extract_financial_data(zip_bytes)
 
+    result['_debug'] = debug_info
     return result
