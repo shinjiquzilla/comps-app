@@ -103,7 +103,7 @@ def is_authenticated() -> bool:
     return st.session_state.get('authenticated', False)
 
 
-def get_current_user() -> dict | None:
+def get_current_user():
     """現在のログインユーザー情報。"""
     return st.session_state.get('user')
 
