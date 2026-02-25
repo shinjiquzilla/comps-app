@@ -2,18 +2,23 @@
 EDINET API Client - type=5 CSV (XBRL pre-processed TSV) downloader & parser.
 
 有価証券報告書・半期報告書の財務データを EDINET API type=5 CSV 形式で取得し、
-pandas DataFrame に読み込む。
+要素IDベースで財務数値を抽出する。
+
+EDINET type=5 CSV 仕様:
+- エンコーディング: UTF-16 (BOM付き)
+- 区切り: タブ
+- カラム: "要素ID", "項目名", "コンテキストID", "相対年度", "連結・個別", "期間・時点", "ユニットID", "単位", "値"
+- 相対年度: "当期", "当期末", "前期", "前期末" 等
+- 値: 円単位（百万円ではない）
 """
 
 import io
 import os
-import re
 import time
 import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import pandas as pd
 import requests
 import urllib3
 
@@ -31,6 +36,48 @@ DOC_TYPE_MAP = {
 }
 
 KEY_FILE = Path.home() / ".edinet_key"
+
+# 要素ID → 内部キー マッピング（XBRL taxonomy 標準名）
+# 有報(asr) / 半期報(ssr) 共通
+ELEMENT_MAP = {
+    # P&L
+    'jppfs_cor:NetSales': 'revenue',
+    'jppfs_cor:Revenue': 'revenue',  # IFRS
+    'jppfs_cor:OperatingIncome': 'operating_income',
+    'jppfs_cor:OrdinaryIncome': 'ordinary_income',
+    'jppfs_cor:ProfitLossAttributableToOwnersOfParent': 'net_income',
+    'jppfs_cor:ProfitLoss': 'profit_loss',
+    # CF statement D&A
+    'jppfs_cor:DepreciationAndAmortizationOpeCF': 'depreciation',
+    # BS
+    'jppfs_cor:CashAndDeposits': 'cash',
+    'jppfs_cor:CashAndCashEquivalents': 'cash',
+    'jppfs_cor:InvestmentSecurities': 'investment_securities',
+    'jppfs_cor:ShortTermLoansPayable': 'short_term_debt',
+    'jppfs_cor:ShortTermBorrowings': 'short_term_debt',
+    'jppfs_cor:LongTermLoansPayable': 'long_term_debt',
+    'jppfs_cor:LongTermDebt': 'long_term_debt',
+    'jppfs_cor:BondsPayable': 'bonds',
+    'jppfs_cor:CurrentPortionOfLongTermLoansPayable': 'current_long_term_debt',
+    'jppfs_cor:CurrentPortionOfBondsPayable': 'current_bonds',
+    'jppfs_cor:LeaseObligationsCL': 'lease_debt_current',
+    'jppfs_cor:LeaseObligationsNCL': 'lease_debt_noncurrent',
+    'jppfs_cor:NetAssets': 'net_assets',
+    'jppfs_cor:ShareholdersEquity': 'shareholders_equity',
+    'jppfs_cor:EquityAttributableToOwnersOfParent': 'equity_parent',
+}
+
+# 経営指標等セクションのフォールバック用（項目名ベース）
+SUMMARY_ELEMENT_MAP = {
+    'jpcrp_cor:NetSalesSummaryOfBusinessResults': 'revenue',
+    'jpcrp_cor:OperatingIncomeLossSummaryOfBusinessResults': 'operating_income',
+    'jpcrp_cor:OrdinaryIncomeLossSummaryOfBusinessResults': 'ordinary_income',
+    'jpcrp_cor:ProfitLossAttributableToOwnersOfParentSummaryOfBusinessResults': 'net_income',
+    'jpcrp_cor:EquityToAssetRatioSummaryOfBusinessResults': 'equity_ratio',
+    'jpcrp_cor:NumberOfIssuedSharesEndOfTermIncludingTreasurySharesSummaryOfBusinessResults': 'shares_issued',
+    'jpcrp_cor:NumberOfTreasurySharesEndOfTermSummaryOfBusinessResults': 'treasury_shares',
+    'jpcrp_cor:DividendPaidPerShareSummaryOfBusinessResults': 'dps',
+}
 
 
 def to_sec_code(code: str) -> str:
@@ -101,11 +148,6 @@ def fetch_doc_list(session, api_key, date_str):
 
 def search_documents(session, api_key, sec_code_5, days=400, doc_types=None,
                      progress_callback=None):
-    """
-    指定証券コード（5桁）の有報・半期報告書を EDINET から検索。
-    doc_types: 取得する docTypeCode のリスト（デフォルト: 有報+半期報）
-    Returns: list of EDINET document metadata dicts
-    """
     if doc_types is None:
         doc_types = {"120", "130", "160", "170"}
 
@@ -136,10 +178,6 @@ def search_documents(session, api_key, sec_code_5, days=400, doc_types=None,
 
 
 def classify_documents(docs):
-    """
-    検出した書類を分類して最新のものを返す。
-    Returns: dict with keys 'yuho' (有報), 'hanki' (半期報告書)
-    """
     yuho = []
     hanki = []
 
@@ -150,7 +188,6 @@ def classify_documents(docs):
         elif dt in ("160", "170"):
             hanki.append(doc)
 
-    # 期末日で降順ソート → 最新を取得
     def sort_key(d):
         return d.get("periodEnd", "")
 
@@ -177,145 +214,122 @@ def download_csv_zip(session, api_key, doc_id):
     return resp.content
 
 
-def parse_csv_from_zip(zip_bytes):
+def parse_csv_lines(zip_bytes):
     """
-    type=5 ZIP から CSV/TSV ファイルを読み込んで DataFrame のリストで返す。
-    EDINET type=5 は UTF-16 タブ区切り TSV。
+    type=5 ZIP からメインの財務CSVを読み込み、行リストで返す。
+
+    ZIPには複数CSVが含まれるが、ファイル名が 'jpcrp030000' で始まるものが
+    有報/半期報の本体財務データ。最大サイズのCSVをフォールバックとして使用。
     """
-    dfs = []
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             csv_files = [n for n in zf.namelist()
-                         if n.lower().endswith(('.csv', '.tsv'))]
-            if not csv_files:
-                # CSVが無い場合はXBRL_TO_CSV配下を探す
-                csv_files = [n for n in zf.namelist()
-                             if 'XBRL_TO_CSV' in n and not n.endswith('/')]
+                         if n.endswith('.csv') and 'XBRL_TO_CSV' in n]
 
-            for fname in csv_files:
-                raw = zf.read(fname)
-                # UTF-16 (BOM付き) or UTF-8 を試行
-                for enc in ['utf-16', 'utf-8', 'cp932']:
-                    try:
-                        text = raw.decode(enc)
-                        df = pd.read_csv(io.StringIO(text), sep='\t',
-                                         on_bad_lines='skip')
-                        if len(df.columns) > 1:
-                            dfs.append((fname, df))
-                            break
-                    except (UnicodeDecodeError, pd.errors.ParserError):
-                        continue
+            if not csv_files:
+                return []
+
+            # jpcrp030000 (有報/半期報本体) を優先、なければ最大ファイル
+            target = None
+            for f in csv_files:
+                if 'jpcrp030000' in f or 'jpcrp050000' in f:
+                    target = f
+                    break
+            if target is None:
+                target = max(csv_files, key=lambda n: zf.getinfo(n).file_size)
+
+            raw = zf.read(target)
+
+            # UTF-16 (BOM付き) でデコード
+            for enc in ['utf-16', 'utf-8-sig', 'utf-8', 'cp932']:
+                try:
+                    text = raw.decode(enc)
+                    lines = text.strip().split('\n')
+                    if len(lines) > 1:
+                        return lines
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+
     except zipfile.BadZipFile:
         pass
-    return dfs
+    return []
 
 
-def extract_financial_data(dfs, doc_type="yuho"):
+def extract_financial_data(zip_bytes):
     """
-    type=5 CSVのDataFrameリストから財務数値を抽出。
+    type=5 CSV ZIP から財務数値を抽出。
 
-    EDINET type=5 CSV の主要カラム:
-    - 要素ID / 項目名 / コンテキストID / 値
-    コンテキストIDで当期/前期を判別。
+    CSVカラム: "要素ID" "項目名" "コンテキストID" "相対年度" "連結・個別" "期間・時点" "ユニットID" "単位" "値"
+    インデックス:   0       1         2              3          4            5           6        7      8
 
-    Returns: dict of financial values
+    Returns: dict of financial values (百万円単位に変換済み)
     """
+    lines = parse_csv_lines(zip_bytes)
+    if not lines:
+        return {}
+
     result = {}
 
-    # 全DataFrameを結合
-    all_data = []
-    for fname, df in dfs:
-        all_data.append(df)
-
-    if not all_data:
-        return result
-
-    combined = pd.concat(all_data, ignore_index=True)
-
-    # カラム名を正規化（空白除去）
-    combined.columns = [str(c).strip() for c in combined.columns]
-
-    # type=5 CSVの典型的なカラム名パターンを検出
-    # 「要素ID」「項目名」「コンテキストID」「値」等
-    label_col = None
-    value_col = None
-    context_col = None
-
-    for col in combined.columns:
-        col_lower = col.lower()
-        if '項目' in col or 'label' in col_lower or '要素' in col:
-            if label_col is None:
-                label_col = col
-        if '値' in col or 'value' in col_lower:
-            if value_col is None:
-                value_col = col
-        if 'コンテキスト' in col or 'context' in col_lower:
-            if context_col is None:
-                context_col = col
-
-    if label_col is None or value_col is None:
-        # フォールバック: 列数の多いDFの最初と最後のカラムを使う
-        return result
-
-    # 当期コンテキストのフィルタ
-    # EDINET type=5 の contextRef: "CurrentYearDuration" = 当期通期, etc.
-    current_contexts = [
-        'CurrentYearDuration',
-        'CurrentYearInstant',
-        'CurrentYTDDuration',  # 半期累計
-        'FilingDateInstant',   # BS日付時点
-    ]
-
-    # 財務項目マッピング（日本語ラベル → 内部キー）
-    item_patterns = {
-        '売上高': 'revenue',
-        '売上収益': 'revenue',
-        '営業収益': 'revenue',
-        '営業利益': 'operating_income',
-        '経常利益': 'ordinary_income',
-        '親会社株主に帰属する当期純利益': 'net_income',
-        '当期純利益': 'net_income',
-        '親会社株主に帰属する四半期純利益': 'net_income',
-        '減価償却費': 'depreciation',
-        '減価償却費及び償却費': 'depreciation',
-        '現金及び預金': 'cash',
-        '現金及び現金同等物': 'cash',
-        '短期借入金': 'short_term_debt',
-        '長期借入金': 'long_term_debt',
-        '社債': 'bonds',
-        '１年内返済予定の長期借入金': 'current_long_term_debt',
-        '１年内償還予定の社債': 'current_bonds',
-        'リース債務': 'lease_debt',
-        '純資産合計': 'net_assets',
-        '株主資本合計': 'equity',
-        '自己資本比率': 'equity_ratio',
-        '発行済株式総数': 'shares_outstanding',
-        '自己株式数': 'treasury_shares',
-        '１株当たり配当額': 'dps',
-        '投資有価証券': 'investment_securities',
-    }
-
-    for _, row in combined.iterrows():
-        label = str(row.get(label_col, ''))
-        value = row.get(value_col, None)
-        ctx = str(row.get(context_col, '')) if context_col else 'CurrentYearDuration'
-
-        # 当期データのみ
-        is_current = any(c in ctx for c in current_contexts)
-        if not is_current:
+    for line in lines[1:]:  # ヘッダースキップ
+        parts = line.split('\t')
+        if len(parts) < 9:
             continue
 
-        for pattern, key in item_patterns.items():
-            if pattern in label:
-                try:
-                    val = pd.to_numeric(value, errors='coerce')
-                    if pd.notna(val):
-                        # 既に値がある場合は上書きしない（最初の一致を優先）
-                        if key not in result:
-                            result[key] = float(val)
-                except (ValueError, TypeError):
-                    pass
-                break
+        # ダブルクォートとCR/LFを除去
+        def clean(s):
+            return s.strip().strip('"').strip()
+
+        element_id = clean(parts[0])
+        # label = clean(parts[1])
+        # context_id = clean(parts[2])
+        relative_year = clean(parts[3])
+        consolidated = clean(parts[4])
+        # period_type = clean(parts[5])
+        # unit_id = clean(parts[6])
+        unit = clean(parts[7])
+        value_str = clean(parts[8])
+
+        # 当期（有報: 当期/当期末、半期報: 当中間期/当中間期末）・連結のみ
+        current_periods = ('当期', '当期末', '当中間期', '当中間期末')
+        if relative_year not in current_periods:
+            continue
+        if consolidated != '連結':
+            continue
+
+        # 要素IDでマッチング
+        key = ELEMENT_MAP.get(element_id) or SUMMARY_ELEMENT_MAP.get(element_id)
+        if key is None:
+            continue
+
+        # 既に値がある場合はスキップ（最初の一致を優先）
+        if key in result:
+            continue
+
+        # 値のパース
+        if value_str in ('', '－', '-', '―'):
+            continue
+
+        try:
+            val = float(value_str.replace(',', ''))
+        except ValueError:
+            continue
+
+        # 円単位 → 百万円単位に変換（比率系は除く）
+        if unit == '円' or unit == 'JPY':
+            if key == 'equity_ratio':
+                # %表記の場合（0.829 等）→ そのまま
+                result[key] = val
+            elif key == 'dps':
+                # 1株あたり配当は円のまま
+                result[key] = val
+            else:
+                result[key] = val / 1_000_000  # 百万円
+        else:
+            # 株数等
+            if key in ('shares_issued', 'treasury_shares'):
+                result[key] = val / 1_000  # 千株
+            else:
+                result[key] = val
 
     return result
 
@@ -327,19 +341,11 @@ def extract_financial_data(dfs, doc_type="yuho"):
 def fetch_company_financials(code_4, days=400, progress_callback=None):
     """
     証券コード（4桁）から EDINET type=5 CSV 経由で財務データを取得。
-
-    Returns: dict with keys:
-        'yuho_data': 有報から抽出した数値 dict
-        'hanki_data': 半期報告書から抽出した数値 dict
-        'yuho_doc': 有報メタデータ
-        'hanki_doc': 半期報告書メタデータ
-        'company_name': 企業名
     """
     api_key = load_api_key()
     session = make_session(verify_ssl=False)
     sec_code = to_sec_code(code_4)
 
-    # 書類検索
     docs = search_documents(session, api_key, sec_code, days=days,
                             progress_callback=progress_callback)
 
@@ -363,24 +369,20 @@ def fetch_company_financials(code_4, days=400, progress_callback=None):
         'hanki_doc': classified.get('hanki'),
     }
 
-    # 有報 type=5 CSV 取得
+    # 有報 type=5 CSV
     if 'yuho' in classified:
-        doc = classified['yuho']
-        doc_id = doc.get('docID', '')
+        doc_id = classified['yuho'].get('docID', '')
         if doc_id:
             zip_bytes = download_csv_zip(session, api_key, doc_id)
             time.sleep(1)
-            dfs = parse_csv_from_zip(zip_bytes)
-            result['yuho_data'] = extract_financial_data(dfs, doc_type='yuho')
+            result['yuho_data'] = extract_financial_data(zip_bytes)
 
-    # 半期報告書 type=5 CSV 取得
+    # 半期報告書 type=5 CSV
     if 'hanki' in classified:
-        doc = classified['hanki']
-        doc_id = doc.get('docID', '')
+        doc_id = classified['hanki'].get('docID', '')
         if doc_id:
             zip_bytes = download_csv_zip(session, api_key, doc_id)
             time.sleep(1)
-            dfs = parse_csv_from_zip(zip_bytes)
-            result['hanki_data'] = extract_financial_data(dfs, doc_type='hanki')
+            result['hanki_data'] = extract_financial_data(zip_bytes)
 
     return result
