@@ -330,6 +330,11 @@ if st.session_state.generation_done:
                                                   ["J-GAAP", "IFRS", "US-GAAP"],
                                                   index=0, key=f"acc_{idx}")
                         fy_end = st.text_input("決算月", value=company.get('fy_end', 'Mar'), key=f"fy_{idx}")
+                        st.markdown("**株価・株式**")
+                        stock_price = st.number_input("株価（円）", value=float(company.get('stock_price') or 0),
+                                                      key=f"price_{idx}", step=1.0, format="%.0f")
+                        shares = st.number_input("発行済株式数（千株）", value=int(company.get('shares_outstanding') or 0),
+                                                 key=f"shares_{idx}", step=1, format="%d")
 
                     with col2:
                         st.markdown("**P&L - LTM（百万円）**")
@@ -345,7 +350,7 @@ if st.session_state.generation_done:
                                                  key=f"ebitda_{idx}", step=1, format="%d")
 
                     with col3:
-                        st.markdown("**BS・株式（百万円）**")
+                        st.markdown("**BS（百万円）**")
                         cash = st.number_input("現金及び預金（百万円）", value=int(company.get('cash') or 0),
                                                key=f"cash_{idx}", step=1, format="%d")
                         debt = st.number_input("有利子負債（百万円）", value=int(company.get('total_debt') or 0),
@@ -367,11 +372,35 @@ if st.session_state.generation_done:
                         ebitda_e = st.number_input("EBITDA予想（百万円）", value=int(company.get('ebitda_forecast') or 0),
                                                    key=f"ebitdae_{idx}", step=1, format="%d")
 
+                    # --- 時価総額・EV・マルチプル自動計算 ---
+                    mcap = int(stock_price * shares / 1000) if stock_price and shares else 0
+                    ev = mcap + (debt or 0) - (cash or 0) if mcap else 0
+
+                    with col5:
+                        st.markdown("**自動計算値**")
+                        st.metric("時価総額（百万円）", f"{mcap:,}" if mcap else "N/A")
+                        st.metric("EV（百万円）", f"{ev:,}" if ev else "N/A")
+                        if ebitda and ebitda > 0 and ev > 0:
+                            st.metric("EV/EBITDA (LTM)", f"{ev / ebitda:.1f}x")
+                        else:
+                            st.metric("EV/EBITDA (LTM)", "N/A")
+                        if ni_e and ni_e > 0 and mcap > 0:
+                            st.metric("PER (FY E)", f"{mcap / ni_e:.1f}x")
+                        else:
+                            st.metric("PER (FY E)", "N/A")
+                        if eq and eq > 0 and mcap > 0:
+                            st.metric("PBR", f"{mcap / eq:.2f}x")
+                        else:
+                            st.metric("PBR", "N/A")
+
                     edited = dict(company)
                     edited['name'] = name
                     edited['sector'] = sector
                     edited['accounting'] = accounting
                     edited['fy_end'] = fy_end
+                    edited['stock_price'] = stock_price if stock_price != 0 else None
+                    edited['shares_outstanding'] = shares if shares != 0 else None
+                    edited['market_cap'] = mcap if mcap != 0 else None
                     edited['rev_ltm'] = rev if rev != 0 else None
                     edited['op_ltm'] = op if op != 0 else None
                     edited['ni_ltm'] = ni if ni != 0 else None
