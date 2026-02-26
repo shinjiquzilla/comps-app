@@ -551,37 +551,48 @@ if st.session_state.generation_done:
 
             df_summary = pd.DataFrame(summary_rows)
 
-            # 数値列をfloat型に統一（Noneはnan）→ ソートが正しく動作する
+            # 数値列をfloat型に統一（Noneはnan）→ ソート用
             _num_cols = ['株価（円）', '時価総額（百万円）', 'EV（百万円）',
                          '売上高LTM（百万円）', '営業利益LTM（百万円）', 'EBITDA LTM（百万円）',
                          'EV/EBITDA LTM', 'FY PER', '直近四半期PBR', '配当利回り']
             for col in _num_cols:
                 df_summary[col] = pd.to_numeric(df_summary[col], errors='coerce')
 
-            # column_config: 数値フォーマット＋ソート対応
-            # 整数列はDataFrame側で事前フォーマットしてTextColumnで表示（確実な桁区切り）
-            _int_cols = ['株価（円）', '時価総額（百万円）', 'EV（百万円）',
-                         '売上高LTM（百万円）', '営業利益LTM（百万円）', 'EBITDA LTM（百万円）']
-            for _ic in _int_cols:
-                df_summary[_ic] = df_summary[_ic].apply(
-                    lambda v: f"{int(v):,}" if pd.notna(v) else "—"
-                )
+            # ソートUI
+            _sort_col1, _sort_col2 = st.columns([2, 1])
+            with _sort_col1:
+                _sort_by = st.selectbox(
+                    "ソート", ['なし'] + _num_cols,
+                    index=0, key="summary_sort_col")
+            with _sort_col2:
+                _sort_order = st.radio(
+                    "順序", ['昇順', '降順'],
+                    index=1, horizontal=True, key="summary_sort_order")
 
-            # マルチプル列もフォーマット
-            df_summary['EV/EBITDA LTM'] = df_summary['EV/EBITDA LTM'].apply(
-                lambda v: f"{v:.1f}x" if pd.notna(v) else "—"
-            )
-            df_summary['FY PER'] = df_summary['FY PER'].apply(
-                lambda v: f"{v:.1f}x" if pd.notna(v) else "—"
-            )
-            df_summary['直近四半期PBR'] = df_summary['直近四半期PBR'].apply(
-                lambda v: f"{v:.2f}x" if pd.notna(v) else "—"
-            )
-            df_summary['配当利回り'] = df_summary['配当利回り'].apply(
-                lambda v: f"{v:.1f}%" if pd.notna(v) else "—"
-            )
+            if _sort_by != 'なし':
+                df_summary = df_summary.sort_values(
+                    _sort_by, ascending=(_sort_order == '昇順'), na_position='last'
+                ).reset_index(drop=True)
 
-            # HTMLテーブルで右揃え表示（st.dataframeはtext-align非対応）
+            # 表示用フォーマット関数
+            def _fmt_int(v):
+                return f"{int(v):,}" if pd.notna(v) else "—"
+            def _fmt_1f_x(v):
+                return f"{v:.1f}x" if pd.notna(v) else "—"
+            def _fmt_2f_x(v):
+                return f"{v:.2f}x" if pd.notna(v) else "—"
+            def _fmt_pct(v):
+                return f"{v:.1f}%" if pd.notna(v) else "—"
+
+            _fmt_map = {
+                '株価（円）': _fmt_int, '時価総額（百万円）': _fmt_int,
+                'EV（百万円）': _fmt_int, '売上高LTM（百万円）': _fmt_int,
+                '営業利益LTM（百万円）': _fmt_int, 'EBITDA LTM（百万円）': _fmt_int,
+                'EV/EBITDA LTM': _fmt_1f_x, 'FY PER': _fmt_1f_x,
+                '直近四半期PBR': _fmt_2f_x, '配当利回り': _fmt_pct,
+            }
+
+            # HTMLテーブル生成（数値列右揃え）
             _right_cols = set(_num_cols)
             _html = '<table style="width:100%; border-collapse:collapse; font-size:14px;">'
             _html += '<thead><tr>'
@@ -593,7 +604,8 @@ if st.session_state.generation_done:
                 _html += '<tr>'
                 for col in df_summary.columns:
                     _align = 'right' if col in _right_cols else 'left'
-                    val = row[col] if row[col] != '—' and pd.notna(row[col]) else '—'
+                    fmt_fn = _fmt_map.get(col)
+                    val = fmt_fn(row[col]) if fmt_fn else (row[col] if pd.notna(row[col]) else '—')
                     _html += f'<td style="text-align:{_align}; padding:5px 10px; border-bottom:1px solid #eee; white-space:nowrap;">{val}</td>'
                 _html += '</tr>'
             _html += '</tbody></table>'
