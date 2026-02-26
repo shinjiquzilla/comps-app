@@ -371,23 +371,55 @@ if st.session_state.generation_done:
                 per_fwd = mcap / ni_fwd if mcap and ni_fwd and ni_fwd > 0 else None
                 # 配当利回り: 有報実績DPS / 現在株価
                 dps_actual = c.get('dps')
-                div_yield = dps_actual / stock_px if dps_actual and stock_px and stock_px > 0 else None
+                div_yield = (dps_actual / stock_px * 100) if dps_actual and stock_px and stock_px > 0 else None
+                ev = c.get('_ev') or (multiples.get('ev') if multiples else None)
+                # EVが_multiplesにない場合は手動計算
+                if ev is None and mcap is not None:
+                    _cash = c.get('cash') or 0
+                    _debt = c.get('total_debt') or 0
+                    ev = mcap + _debt - _cash
                 summary_rows.append({
                     'コード': c.get('code', ''),
                     '企業名': c.get('name', ''),
-                    '株価': c.get('stock_price'),
-                    '時価総額(百万)': c.get('market_cap'),
-                    '売上高LTM': c.get('rev_ltm'),
-                    '営業利益LTM': c.get('op_ltm'),
-                    'EBITDA LTM': c.get('ebitda_ltm'),
-                    'EV/EBITDA LTM': f"{multiples['ev_ebitda_ltm']:.1f}x" if multiples.get('ev_ebitda_ltm') else 'N/A',
-                    'FY PER': f"{per_fwd:.1f}x" if per_fwd else 'N/A',
-                    '直近四半期PBR': f"{multiples['pbr']:.2f}x" if multiples.get('pbr') else 'N/A',
-                    '配当利回り': f"{div_yield:.1%}" if div_yield else 'N/A',
+                    '株価（円）': stock_px,
+                    '時価総額（百万円）': mcap,
+                    'EV（百万円）': ev,
+                    '売上高LTM（百万円）': c.get('rev_ltm'),
+                    '営業利益LTM（百万円）': c.get('op_ltm'),
+                    'EBITDA LTM（百万円）': c.get('ebitda_ltm'),
+                    'EV/EBITDA LTM': multiples.get('ev_ebitda_ltm'),
+                    'FY PER': per_fwd,
+                    '直近四半期PBR': multiples.get('pbr'),
+                    '配当利回り': div_yield,
                 })
 
             df_summary = pd.DataFrame(summary_rows)
-            st.dataframe(df_summary, use_container_width=True, hide_index=True)
+
+            # 数値列をfloat型に統一（Noneはnan）→ ソートが正しく動作する
+            _num_cols = ['株価（円）', '時価総額（百万円）', 'EV（百万円）',
+                         '売上高LTM（百万円）', '営業利益LTM（百万円）', 'EBITDA LTM（百万円）',
+                         'EV/EBITDA LTM', 'FY PER', '直近四半期PBR', '配当利回り']
+            for col in _num_cols:
+                df_summary[col] = pd.to_numeric(df_summary[col], errors='coerce')
+
+            # column_config: 数値フォーマット＋ソート対応
+            _col_config = {
+                'コード': st.column_config.TextColumn('コード'),
+                '企業名': st.column_config.TextColumn('企業名'),
+                '株価（円）': st.column_config.NumberColumn('株価（円）', format="%,.0f"),
+                '時価総額（百万円）': st.column_config.NumberColumn('時価総額（百万円）', format="%,.0f"),
+                'EV（百万円）': st.column_config.NumberColumn('EV（百万円）', format="%,.0f"),
+                '売上高LTM（百万円）': st.column_config.NumberColumn('売上高LTM（百万円）', format="%,.0f"),
+                '営業利益LTM（百万円）': st.column_config.NumberColumn('営業利益LTM（百万円）', format="%,.0f"),
+                'EBITDA LTM（百万円）': st.column_config.NumberColumn('EBITDA LTM（百万円）', format="%,.0f"),
+                'EV/EBITDA LTM': st.column_config.NumberColumn('EV/EBITDA LTM', format="%.1fx"),
+                'FY PER': st.column_config.NumberColumn('FY PER', format="%.1fx"),
+                '直近四半期PBR': st.column_config.NumberColumn('直近四半期PBR', format="%.2fx"),
+                '配当利回り': st.column_config.NumberColumn('配当利回り', format="%.1f%%"),
+            }
+
+            st.dataframe(df_summary, use_container_width=True, hide_index=True,
+                         column_config=_col_config)
 
             # --- 決算短信セクション ---
             st.subheader("📄 決算短信")
