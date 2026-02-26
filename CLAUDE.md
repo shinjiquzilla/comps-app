@@ -42,8 +42,8 @@ streamlit run app.py
 ### SSL検証バイパス
 社内ネットワーク対応のため、`CURL_CA_BUNDLE=''` と `REQUESTS_CA_BUNDLE=''` を設定。`stock_fetcher.py`と`app.py`の両方で設定。
 
-### 認証（オプション）
-`st.secrets`に`supabase`設定がある場合のみ認証ON。ない場合は認証なしで動作。
+### 認証（現在無効）
+`auth.py`はリポジトリに残っているが、`app.py`からのimport・呼び出しは削除済み（2026/2/26）。`gotrue`もrequirements.txtから除外。再度有効にする場合は`auth.py`のimportとAuth Gateを`app.py`に戻す。
 
 ## comps_generator JSON形式
 `comps_generator.py`はCLIでも使用可能:
@@ -74,6 +74,7 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, gotrue
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
+| 2026/2/26 | aa347aa | ログイン機能を無効化（auth.pyは残置、app.pyからの呼び出し・gotrueを削除） |
 | 2026/2/26 | b7c90b4 | Cloud上で生成後に結果が表示されない問題を修正（st.rerun追加、try-except、メモリ削減） |
 | 2026/2/25 | a21e95c | runtime.txt追加、type hint互換性修正 |
 | 〜2026/2/25 | 初期構築 | EDINET/TDnet/yfinance連携、手動補完UI、Excel出力 |
