@@ -576,6 +576,31 @@ if st.session_state.generation_done:
             }
             _right_cols = set(_num_cols)
 
+            # 株価取得日を取得（最初の企業のキャッシュから）
+            _stock_date = ""
+            for _sc in companies_for_config:
+                _sc_cache = _load_stock_cache(_sc.get('code', ''))
+                if _sc_cache and _sc_cache.get('_fetched_date'):
+                    _sd = _sc_cache['_fetched_date']  # "2026-02-26"
+                    _stock_date = _sd.replace('-', '/')
+                    break
+
+            # 列ヘッダー表示名（2行目に単位・日付を折り返し）
+            _col_display = {
+                'コード': 'コード',
+                '企業名': '企業名',
+                '株価（円）': f'株価（円）<br><span class="sub">{_stock_date}</span>' if _stock_date else '株価<br><span class="sub">（円）</span>',
+                '時価総額（百万円）': '時価総額<br><span class="sub">（百万円）</span>',
+                'EV（百万円）': 'EV<br><span class="sub">（百万円）</span>',
+                '売上高LTM（百万円）': '売上高LTM<br><span class="sub">（百万円）</span>',
+                '営業利益LTM（百万円）': '営業利益LTM<br><span class="sub">（百万円）</span>',
+                'EBITDA LTM（百万円）': 'EBITDA LTM<br><span class="sub">（百万円）</span>',
+                'EV/EBITDA LTM': 'EV/EBITDA<br><span class="sub">LTM</span>',
+                'FY PER': 'FY PER',
+                '直近四半期PBR': '直近四半期<br><span class="sub">PBR</span>',
+                '配当利回り': '配当利回り',
+            }
+
             # テーブルデータをJSON化（ソート用に生数値も保持）
             import json as _tbl_json
             _tbl_rows = []
@@ -592,20 +617,22 @@ if st.session_state.generation_done:
             _cols_json = _tbl_json.dumps(list(df_summary.columns), ensure_ascii=False)
             _rows_json = _tbl_json.dumps(_tbl_rows, ensure_ascii=False)
             _right_json = _tbl_json.dumps(list(_right_cols), ensure_ascii=False)
+            _display_json = _tbl_json.dumps(_col_display, ensure_ascii=False)
 
             # JavaScript付きHTMLテーブル（列ヘッダークリックでソート）
-            _table_height = 80 + len(df_summary) * 38
+            _table_height = 95 + len(df_summary) * 38
             import streamlit.components.v1 as components
             components.html(f"""
 <style>
   body {{ margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size:14px; }}
   table {{ width:100%; border-collapse:collapse; }}
-  th {{ padding:8px 12px; border-bottom:2px solid #ddd; cursor:pointer; user-select:none; white-space:nowrap; background:#fafafa; position:sticky; top:0; }}
+  th {{ padding:8px 12px; border-bottom:2px solid #ddd; cursor:pointer; user-select:none; background:#fafafa; position:sticky; top:0; vertical-align:bottom; line-height:1.4; }}
   th:hover {{ background:#f0f0f0; }}
   td {{ padding:6px 12px; border-bottom:1px solid #eee; white-space:nowrap; }}
   tr:hover {{ background:#f8f8ff; }}
   .sort-arrow {{ font-size:10px; margin-left:4px; color:#999; }}
   .sort-arrow.active {{ color:#333; }}
+  .sub {{ font-size:11px; color:#888; font-weight:normal; }}
 </style>
 <table id="comps-table">
   <thead><tr id="header-row"></tr></thead>
@@ -615,6 +642,7 @@ if st.session_state.generation_done:
 const cols = {_cols_json};
 const rows = {_rows_json};
 const rightCols = new Set({_right_json});
+const colDisplay = {_display_json};
 let sortCol = null;
 let sortAsc = true;
 
@@ -643,7 +671,8 @@ function render() {{
     }} else {{
       arrow = ' <span class="sort-arrow">▲▼</span>';
     }}
-    th.innerHTML = col + arrow;
+    const displayName = colDisplay[col] || col;
+    th.innerHTML = displayName + arrow;
     th.onclick = () => {{
       if (sortCol === col) {{ sortAsc = !sortAsc; }}
       else {{ sortCol = col; sortAsc = true; }}
