@@ -223,6 +223,113 @@ def _extract_dps(text):
     return None
 
 
+def identify_tanshin_pdf(pdf_bytes, candidate_codes):
+    """
+    PDF内容から証券コード・決算期・期間種別を自動判定。
+
+    Parameters:
+        pdf_bytes: PDFバイト列
+        candidate_codes: list of str — 入力済み証券コード（例: ['6763', '6989', ...]）
+
+    Returns:
+        {
+            'code_4': '6763' or None,
+            'company_name': '帝国通信工業' or '',
+            'fy_end': '2026-03' or '',        # 決算期（YYYY-MM）
+            'period_type': 'FY' or 'Q2',
+            'suggested_filename': 'tanshin_2026-03_FY.pdf' or '',
+        }
+    """
+    result = {
+        'code_4': None,
+        'company_name': '',
+        'fy_end': '',
+        'period_type': 'FY',
+        'suggested_filename': '',
+    }
+
+    if fitz is None:
+        return result
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        return result
+
+    if len(doc) == 0:
+        doc.close()
+        return result
+
+    text = doc[0].get_text()
+    doc.close()
+
+    if not text.strip():
+        return result
+
+    # --- 証券コード検出 ---
+    # 決算短信1ページ目: 「コード番号 6763」「証券コード：6763」等
+    code_patterns = [
+        r'コード[番号\s:：]*(\d{4})',
+        r'証券コード[\s:：]*(\d{4})',
+        r'[\(（](\d{4})[\)）]',  # (6763) のようなパターン
+    ]
+    detected_code = None
+    for pat in code_patterns:
+        m = re.search(pat, text)
+        if m:
+            code = m.group(1)
+            if code in candidate_codes:
+                detected_code = code
+                break
+
+    if detected_code is None:
+        # フォールバック: candidate_codesの中でテキストに含まれるものを探す
+        for code in candidate_codes:
+            if code in text:
+                detected_code = code
+                break
+
+    result['code_4'] = detected_code
+
+    # --- 会社名検出（1ページ目の最初数行から） ---
+    lines = text.split('\n')
+    for line in lines[:15]:
+        ls = line.strip()
+        # 「○○株式会社」または「株式会社○○」のパターン
+        m = re.search(r'((?:\S+)?株式会社(?:\S+)?)', ls)
+        if m:
+            name = m.group(1)
+            # ノイズ除去: 東京証券取引所等は除外
+            if '証券取引所' not in name and '監査法人' not in name:
+                result['company_name'] = name
+                break
+
+    # --- 決算期検出 ---
+    # 「2026年3月期」「令和8年3月期」等
+    m = re.search(r'(\d{4})\s*年\s*(\d{1,2})\s*月\s*期', text)
+    if m:
+        year = int(m.group(1))
+        month = int(m.group(2))
+        result['fy_end'] = f"{year}-{month:02d}"
+
+    # --- 期間種別検出 ---
+    # 「第X四半期」「第Ｘ四半期」を検出
+    if re.search(r'第[1１]四半期', text):
+        result['period_type'] = 'Q1'
+    elif re.search(r'第[2２]四半期', text):
+        result['period_type'] = 'Q2'
+    elif re.search(r'第[3３]四半期', text):
+        result['period_type'] = 'Q3'
+    else:
+        result['period_type'] = 'FY'
+
+    # --- ファイル名生成 ---
+    if result['fy_end']:
+        result['suggested_filename'] = f"tanshin_{result['fy_end']}_{result['period_type']}.pdf"
+
+    return result
+
+
 def save_tanshin_pdf(pdf_bytes, code_4, filename, base_dir=None):
     """
     アップロードされた決算短信PDFをローカルに保存。

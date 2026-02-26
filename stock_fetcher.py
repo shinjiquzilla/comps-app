@@ -23,6 +23,36 @@ def _disable_ssl_verification():
     ssl._create_default_https_context = ssl._create_unverified_context
 
 
+def validate_stock_code(code_4):
+    """
+    証券コードが東証に存在するか軽量チェック。
+
+    Returns:
+        (True, company_name) or (False, error_message)
+    """
+    _disable_ssl_verification()
+    try:
+        ticker = yf.Ticker(f"{code_4}.T")
+        try:
+            ticker._data._session.verify = False
+        except AttributeError:
+            pass
+        hist = ticker.history(period="5d")
+        if hist.empty:
+            return False, f"証券コード {code_4} は東証に存在しないか、データを取得できません"
+        name = ''
+        try:
+            name = ticker.info.get('shortName', '')
+        except Exception:
+            pass
+        return True, name
+    except Exception as e:
+        err_msg = str(e)
+        if 'Rate' in err_msg or 'Too Many' in err_msg:
+            return True, ''  # レート制限時は通過させる（生成時に再取得する）
+        return False, f"検証エラー: {err_msg}"
+
+
 def fetch_stock_info(code_4, max_retries=3):
     """
     証券コード（4桁）から株価情報を取得。

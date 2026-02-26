@@ -29,10 +29,10 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from edinet_client import fetch_company_financials, fetch_companies_batch, load_api_key, clear_cache, load_cached_meta
-from stock_fetcher import fetch_stock_info
+from stock_fetcher import fetch_stock_info, validate_stock_code
 from financial_calc import build_company_data
 from comps_generator import generate_comps
-from tanshin_parser import parse_tanshin_pdf, save_tanshin_pdf
+from tanshin_parser import parse_tanshin_pdf, save_tanshin_pdf, identify_tanshin_pdf
 
 # ---------------------------------------------------------------------------
 # Page Config
@@ -109,6 +109,16 @@ with col2:
     st.write("")
     generate_btn = st.button("🚀 Comps表を生成", type="primary", use_container_width=True)
 
+# --- 入力フォーマット即時検証 ---
+_input_codes_raw = [c.strip() for c in codes_input.split(",") if c.strip()]
+_format_errors = []
+for _c in _input_codes_raw:
+    if not _c.isdigit() or len(_c) != 4:
+        _format_errors.append(f"「{_c}」は4桁の数字ではありません")
+if _format_errors and codes_input.strip():
+    for _fe in _format_errors:
+        st.error(_fe)
+
 # ---------------------------------------------------------------------------
 # Session State Init
 # ---------------------------------------------------------------------------
@@ -128,6 +138,8 @@ if generate_btn:
     codes = [c.strip() for c in codes_input.split(",") if c.strip()]
     if not codes:
         st.error("証券コードを入力してください。")
+    elif any(not c.isdigit() or len(c) != 4 for c in codes):
+        st.error("証券コードは4桁の数字で入力してください。")
     else:
         # EDINET API Key チェック（なくても株価取得は可能）
         edinet_available = False
@@ -147,6 +159,51 @@ if generate_btn:
         progress_bar = st.progress(0)
         status_container = st.empty()
         progress_text = st.empty()
+
+        # ---- Step 0: 証券コード存在チェック ----
+        # 既にPDF格納済みの企業はスキップ（yfinance不要）
+        from pathlib import Path
+        _tanshin_base = Path(__file__).parent / "data" / "tanshin"
+
+        status_container.info("🔍 証券コードを検証中...")
+        invalid_codes = []
+        valid_codes = []
+        _need_yf_check = []
+        for vc in codes:
+            local_dir = _tanshin_base / vc
+            if local_dir.is_dir() and any(local_dir.iterdir()):
+                valid_codes.append(vc)  # PDF格納済み → 検証不要
+            else:
+                _need_yf_check.append(vc)
+
+        for vi, vc in enumerate(_need_yf_check):
+            progress_text.text(f"  🔍 {vc}: yfinanceで検証中... ({vi+1}/{len(_need_yf_check)})")
+            progress_bar.progress((vi + 1) / len(_need_yf_check) * 0.1 if _need_yf_check else 0.1)
+            is_valid, msg = validate_stock_code(vc)
+            if is_valid:
+                valid_codes.append(vc)
+            else:
+                invalid_codes.append((vc, msg))
+            # yfinanceレート制限回避
+            if vi < len(_need_yf_check) - 1:
+                time.sleep(2)
+
+        if not _need_yf_check:
+            progress_bar.progress(0.1)
+
+        if invalid_codes:
+            status_container.empty()
+            progress_bar.empty()
+            progress_text.empty()
+            for inv_code, inv_msg in invalid_codes:
+                st.error(f"❌ {inv_msg}")
+            st.warning("無効な証券コードを修正してから再度実行してください。")
+            st.stop()
+
+        # 元の入力順序を維持
+        _valid_set = set(valid_codes)
+        codes = [c for c in codes if c in _valid_set]
+        status_container.success(f"✅ {len(codes)}社の証券コードを確認しました。")
 
         # ---- Step 1: EDINET一括検索（全社まとめて1回の日付ループ） ----
         edinet_results = {}  # code_4 -> edinet_data
@@ -170,7 +227,7 @@ if generate_btn:
                 status_container.info(f"📄 EDINET: {len(codes)}社分を一括検索中（{search_days}日間）...")
 
             def edinet_progress(current, total):
-                progress_bar.progress(current / total * 0.6)  # 全体の60%をEDINETに割り当て
+                progress_bar.progress(0.1 + current / total * 0.55)  # 10-65%をEDINETに割り当て
                 progress_text.text(f"  📄 EDINET検索: {current}/{total}日")
 
             try:
@@ -179,7 +236,7 @@ if generate_btn:
                     use_cache=use_cache
                 )
                 if cached_codes and not uncached_codes:
-                    progress_bar.progress(0.6)
+                    progress_bar.progress(0.65)
             except Exception as e:
                 st.session_state.errors.append(f"EDINET一括検索エラー: {e}")
         else:
@@ -210,7 +267,7 @@ if generate_btn:
             tdnet_data = {'forecast': {}}
 
             # 株価
-            base_progress = 0.6 + (i / len(codes)) * 0.35
+            base_progress = 0.65 + (i / len(codes)) * 0.30
             progress_bar.progress(min(base_progress, 0.95))
             status_container.info(f"📈 株価: {code} ({i+1}/{len(codes)})")
             progress_text.text(f"  📈 {code}: 株価取得中...")
@@ -316,35 +373,180 @@ if st.session_state.generation_done:
             df_summary = pd.DataFrame(summary_rows)
             st.dataframe(df_summary, use_container_width=True, hide_index=True)
 
-            # --- 決算短信アップロードセクション ---
+            # --- 決算短信一括アップロードセクション ---
             st.subheader("📄 決算短信アップロード（任意）")
-            st.caption("決算短信PDFをアップロードすると、業績予想値を自動抽出して下の予想値フィールドにプリフィルします。")
+            st.caption("決算短信PDFをまとめてアップロードすると、PDF内容から会社・期間を自動判定し、業績予想値をプリフィルします。")
 
             if 'tanshin_forecasts' not in st.session_state:
                 st.session_state.tanshin_forecasts = {}
 
-            tanshin_cols = st.columns(len(companies_for_config))
-            for t_idx, (t_col, comp) in enumerate(zip(tanshin_cols, companies_for_config)):
-                code = comp.get('code', '')
-                with t_col:
-                    uploaded = st.file_uploader(
-                        f"{code} {comp.get('name', '')}",
-                        type=['pdf'],
-                        key=f"tanshin_{t_idx}",
-                    )
-                    if uploaded is not None:
-                        pdf_bytes = uploaded.read()
-                        parsed = parse_tanshin_pdf(pdf_bytes)
+            candidate_codes = [c.get('code', '') for c in companies_for_config if c.get('code')]
+            # code→企業名のマップ
+            code_name_map = {c.get('code', ''): c.get('name', '') for c in companies_for_config}
+
+            # --- 必要な決算短信の指定 ---
+            st.markdown("**必要な決算短信（全社共通）**")
+            _cur_year = datetime.today().year
+            _period_options = []
+            for _y in range(_cur_year - 1, _cur_year + 2):
+                _fy = f"{_y}-03"
+                for _pt in ["通期", "Q1", "Q2", "Q3"]:
+                    _period_options.append(f"{_fy} {_pt}")
+
+            required_periods_raw = st.multiselect(
+                "各社に必要な期間を選択してください",
+                options=_period_options,
+                default=[f"{_cur_year}-03 通期", f"{_cur_year + 1}-03 Q2"],
+                key="required_periods",
+                help="選択した期間 × 全企業 の決算短信が必要と判定します。3月期以外の企業がある場合は手動で調整してください。",
+            )
+
+            # "2025-03 通期" → ("2025-03", "FY") にパース
+            required_periods = []
+            for rp in required_periods_raw:
+                parts = rp.split(' ', 1)
+                ptype = 'FY' if parts[1] == '通期' else parts[1]
+                required_periods.append((parts[0], ptype))
+
+            # 期待される全ドキュメント: 企業 × 期間
+            expected_set = set()
+            for code in candidate_codes:
+                for fy_end, ptype in required_periods:
+                    expected_set.add((code, fy_end, ptype))
+
+            if required_periods:
+                _period_labels = [rp.replace('-', '/').replace('FY', '通期') for _, rp_raw in zip(required_periods, required_periods_raw)]
+                st.caption(f"必要書類: {len(candidate_codes)}社 × {len(required_periods)}期間 = **{len(expected_set)}件**")
+
+            # --- ファイルアップロード ---
+            uploaded_files = st.file_uploader(
+                "PDFファイルをまとめてアップロード",
+                type=['pdf'],
+                accept_multiple_files=True,
+                key="tanshin_bulk",
+            )
+
+            if uploaded_files:
+                # 判定結果テーブル
+                id_results = []
+                for uf in uploaded_files:
+                    pdf_bytes = uf.read()
+                    uf.seek(0)  # reset for potential re-read
+                    identification = identify_tanshin_pdf(pdf_bytes, candidate_codes)
+                    id_results.append({
+                        'file': uf,
+                        'pdf_bytes': pdf_bytes,
+                        'identification': identification,
+                    })
+
+                # アップロード済みセット
+                uploaded_set = set()
+                for ir in id_results:
+                    ident = ir['identification']
+                    if ident['code_4'] and ident['fy_end']:
+                        uploaded_set.add((ident['code_4'], ident['fy_end'], ident['period_type']))
+
+                # 判定結果をテーブル表示（ステータス列付き）
+                _period_type_ja = {'FY': '通期', 'Q1': 'Q1', 'Q2': 'Q2', 'Q3': 'Q3'}
+                table_rows = []
+                for ir in id_results:
+                    ident = ir['identification']
+                    code = ident['code_4']
+                    if code and ident['fy_end']:
+                        company_display = f"{code} {code_name_map.get(code, ident['company_name'])}"
+                        fy = ident['fy_end'].replace('-', '/')
+                        period_display = f"{_period_type_ja.get(ident['period_type'], ident['period_type'])} {fy}"
+                        filename = ident['suggested_filename'] or '—'
+                        key = (code, ident['fy_end'], ident['period_type'])
+                        if key in expected_set:
+                            status = "✅ OK"
+                        elif code not in candidate_codes:
+                            status = "⚠️ 対象外の企業"
+                        else:
+                            status = "⚠️ 対象外の期間"
+                    elif code:
+                        company_display = f"{code} {code_name_map.get(code, ident['company_name'])}"
+                        period_display = "—（期間判定失敗）"
+                        filename = '—'
+                        status = "⚠️ 期間不明"
+                    else:
+                        company_display = "—"
+                        period_display = "—"
+                        filename = "—"
+                        status = "❌ 判定失敗"
+                    table_rows.append({
+                        'ファイル': ir['file'].name,
+                        '判定企業': company_display,
+                        '期間': period_display,
+                        '保存ファイル名': filename,
+                        'ステータス': status,
+                    })
+
+                st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
+
+                # --- 過不足チェック ---
+                if required_periods:
+                    missing = expected_set - uploaded_set
+
+                    # 対象外のアップロード（企業が対象外 or 期間が対象外）
+                    unexpected = []
+                    for ir in id_results:
+                        ident = ir['identification']
+                        code = ident['code_4']
+                        if code is None:
+                            unexpected.append({
+                                'ファイル': ir['file'].name,
+                                '理由': '企業・期間を判定できませんでした',
+                            })
+                        elif code and ident['fy_end']:
+                            key = (code, ident['fy_end'], ident['period_type'])
+                            if key not in expected_set:
+                                fy = ident['fy_end'].replace('-', '/')
+                                pt_ja = _period_type_ja.get(ident['period_type'], ident['period_type'])
+                                if code not in candidate_codes:
+                                    reason = f"対象外の企業です（{code}）"
+                                else:
+                                    reason = f"必要な期間に含まれていません（{fy} {pt_ja}）"
+                                unexpected.append({
+                                    'ファイル': ir['file'].name,
+                                    '理由': reason,
+                                })
+
+                    if not missing and not unexpected:
+                        st.success(f"✅ 全{len(expected_set)}件の決算短信が揃っています。")
+                    else:
+                        if missing:
+                            st.error(f"❌ 不足: {len(missing)}件の決算短信がアップロードされていません。")
+                            missing_rows = []
+                            for code, fy_end, ptype in sorted(missing):
+                                fy = fy_end.replace('-', '/')
+                                pt_ja = _period_type_ja.get(ptype, ptype)
+                                missing_rows.append({
+                                    '企業': f"{code} {code_name_map.get(code, '')}",
+                                    '必要な期間': f"{fy} {pt_ja}",
+                                    'ファイル名（期待）': f"tanshin_{fy_end}_{ptype}.pdf",
+                                })
+                            st.dataframe(pd.DataFrame(missing_rows), use_container_width=True, hide_index=True)
+
+                        if unexpected:
+                            st.warning(f"⚠️ 対象外: {len(unexpected)}件のファイルは必要な書類に該当しません。")
+                            st.dataframe(pd.DataFrame(unexpected), use_container_width=True, hide_index=True)
+
+                        matched = len(uploaded_set & expected_set)
+                        st.info(f"📊 進捗: {matched}/{len(expected_set)}件 完了")
+
+                # 判定成功分を自動パース＆保存
+                for ir in id_results:
+                    ident = ir['identification']
+                    code = ident['code_4']
+                    if code:
+                        parsed = parse_tanshin_pdf(ir['pdf_bytes'])
                         if parsed:
                             st.session_state.tanshin_forecasts[code] = parsed
-                            st.success(f"✅ {len(parsed)}項目を抽出")
-                            with st.expander("抽出結果", expanded=False):
-                                st.json(parsed)
-                        else:
-                            st.warning("パース失敗: 手動入力で補完してください")
-                        # ローカル保存
+                        # EDINET命名規則に準拠したファイル名で保存
+                        save_name = ident['suggested_filename'] or ir['file'].name
                         try:
-                            save_tanshin_pdf(pdf_bytes, code, uploaded.name)
+                            save_tanshin_pdf(ir['pdf_bytes'], code, save_name)
                         except Exception:
                             pass  # 保存失敗は非致命的
 
