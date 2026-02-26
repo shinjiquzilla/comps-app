@@ -15,7 +15,7 @@ streamlit run app.py
 |---------|------|---------|
 | `app.py` | Streamlit UI・メインフロー | `process_company()` |
 | `edinet_client.py` | EDINET API type=5 CSV取得・パース | `fetch_company_financials()` |
-| `tdnet_client.py` | TDnetスクレイピング+PyMuPDF PDF解析 | `fetch_tanshin_forecasts()` |
+| `tdnet_client.py` | TDnetスクレイピング+PyMuPDF PDF解析（**無効化済み**: TDnetは有料サービスでログイン必要） | `fetch_tanshin_forecasts()` |
 | `stock_fetcher.py` | yfinance株価取得 | `fetch_stock_info()` |
 | `financial_calc.py` | LTM・EBITDA・EV・マルチプル計算 | `build_company_data()` |
 | `comps_generator.py` | Excel Comps表生成（openpyxl） | `generate_comps(config, path)` |
@@ -24,7 +24,6 @@ streamlit run app.py
 ## データフロー
 ```
 証券コード → edinet_client (有報・半期報) → financial_calc (LTM計算)
-           → tdnet_client (決算短信→業績予想)   ↓
            → stock_fetcher (株価)          → build_company_data() → app.py 表示
                                                                   → comps_generator (Excel出力)
 ```
@@ -82,8 +81,8 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 - **結果表示セクションはtry-exceptでラップ**: エラー時にサイレントに元の画面に戻る問題を防止。`st.error()`でエラーメッセージとトレースバックを表示
 - **EDINET API Key**: Cloud上では`st.secrets`の`edinet.api_key`で設定。未設定の場合はスキップされ株価のみ取得。`st.secrets`アクセスはtry-exceptで囲むこと（secrets.toml未設定時にクラッシュするため）
 - **EDINET一括検索**: `fetch_companies_batch()`で全社まとめて1回の日付ループ。N社×日数→1×日数に削減
-- **TDnet検索はオプション（デフォルトOFF）**: サイドバーのチェックボックスで有効化。1社あたり数分追加されるため、必要時のみONに
-- **デフォルト検索期間90日**: 有報・半期報の提出は決算後3ヶ月以内が多いため90日で十分
+- **TDnet無効化済み**: TDnetは有料データベースサービスでログインが必要なため、app.pyからのimport・呼び出しを削除。`tdnet_client.py`はリポジトリに残置
+- **デフォルト検索期間400日**: 有報は決算後3ヶ月（3月決算→6月提出）、半期報も同様。400日でバッチ検索なら約7分
 - **sys.stdout書き換え禁止**: モジュールのトップレベルで`sys.stdout`を書き換えるとStreamlitのIO破壊でクラッシュ。`if __name__ == '__main__':`ガード必須
 - **未使用.pyでもimportに注意**: Streamlit Cloudは全.pyを走査する場合がある。使わないモジュールでもimportエラーがあるとクラッシュ（auth.pyのgotrueで発生→try/except化）
 - **yfinanceレート制限**: 複数銘柄連続取得でToo Many Requests。各社間に3秒ディレイ＋リトライ（5/10/15秒バックオフ）で対応済み
@@ -91,7 +90,8 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
-| 2026/2/26 | 0392c01 | EDINET一括検索で高速化（N社×400日→1×90日）、TDnetをオプション化 |
+| 2026/2/26 | 522831e | TDnet機能を完全無効化（有料サービスでログイン必要）、検索期間400日に戻す |
+| 2026/2/26 | 0392c01 | EDINET一括検索で高速化（N社×日数→1×日数） |
 | 2026/2/26 | d73ccfc | EDINET CSVパーサーにIFRS対応追加（6779空データ修正） |
 | 2026/2/26 | 5cb98db | 手動補完UIに株価・株式数入力＋マルチプル自動再計算を追加 |
 | 2026/2/26 | 31b775f | 手動補完UIの金額を整数（百万円）表示に変更 |
@@ -115,7 +115,6 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 
 ## 既知の課題・TODO
 - LTM計算が通期値の近似になっている（前期H1自動取得未対応）
-- TDnet決算短信PDFの業績予想抽出は正規表現ベースで、フォーマット差異に弱い（6768/6779で tanshin_count=0）
+- TDnet機能は無効化済み（有料サービス）。業績予想は手動入力で対応
 - EDINET APIは1日1リクエスト/秒のレート制限あり（`time.sleep(1)`で対応済み）
-- TDnet検索のさらなる高速化（キャッシュ等）が今後の改善候補
 - yfinanceレート制限は完全には回避できない→手動株価入力で代替可能
