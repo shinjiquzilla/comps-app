@@ -381,7 +381,7 @@ if st.session_state.generation_done:
                 summary_rows.append({
                     'コード': c.get('code', ''),
                     '企業名': c.get('name', ''),
-                    '株価（円）': stock_px,
+                    '株価（円）': int(stock_px) if stock_px else None,
                     '時価総額（百万円）': mcap,
                     'EV（百万円）': ev,
                     '売上高LTM（百万円）': c.get('rev_ltm'),
