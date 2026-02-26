@@ -227,6 +227,11 @@ if generate_btn:
                 for err in result['errors']:
                     st.session_state.errors.append(f"{code}: {err}")
 
+            # yfinance レート制限回避: 各社の間に3秒待機
+            if i < len(codes) - 1:
+                progress_text.text("  ⏳ レート制限回避のため待機中...")
+                time.sleep(3)
+
         progress_bar.progress(1.0)
         status_container.success(f"✅ 完了: {len(codes)}社の処理が終わりました。下にスクロールして結果を確認してください。")
         progress_text.empty()
