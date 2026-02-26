@@ -57,9 +57,12 @@ with st.sidebar:
 
     # EDINET API Key（secrets にあればそちらを優先）
     default_edinet_key = ""
-    if hasattr(st, 'secrets') and "edinet" in st.secrets:
-        default_edinet_key = st.secrets["edinet"].get("api_key", "")
-        os.environ["EDINET_API_KEY"] = default_edinet_key
+    try:
+        if "edinet" in st.secrets:
+            default_edinet_key = st.secrets["edinet"].get("api_key", "")
+            os.environ["EDINET_API_KEY"] = default_edinet_key
+    except Exception:
+        pass
 
     if not default_edinet_key:
         api_key_input = st.text_input(
