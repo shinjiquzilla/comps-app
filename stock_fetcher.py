@@ -3,12 +3,18 @@ Stock Fetcher - yfinance経由で最新株価・時価総額を取得。
 
 社内ネットワーク対応のSSL検証バイパス付き。
 yfinance が内部で curl_cffi を使うため、環境変数でSSL検証を無効化。
+
+日次キャッシュ: 取得済みの株価データは data/stock/{code_4}/YYYY-MM-DD.json に
+保存し、同日中は再取得しない（前日終値なので日中変わらない）。
 """
 
+import json
 import os
 import ssl
 import time
 import urllib3
+from datetime import date
+from pathlib import Path
 
 # curl_cffi の SSL 問題を回避: 空文字列を設定してSSL検証をスキップ
 os.environ['CURL_CA_BUNDLE'] = ''
@@ -53,9 +59,32 @@ def validate_stock_code(code_4):
         return False, f"検証エラー: {err_msg}"
 
 
-def fetch_stock_info(code_4, max_retries=3):
+_STOCK_CACHE_DIR = Path(__file__).parent / "data" / "stock"
+
+
+def _load_stock_cache(code_4):
+    """今日の日付のキャッシュがあれば読み込む。なければNone。"""
+    cache_file = _STOCK_CACHE_DIR / code_4 / f"{date.today().isoformat()}.json"
+    if cache_file.exists():
+        try:
+            return json.loads(cache_file.read_text(encoding='utf-8'))
+        except Exception:
+            return None
+    return None
+
+
+def _save_stock_cache(code_4, data):
+    """株価データを今日の日付でキャッシュ保存。"""
+    cache_dir = _STOCK_CACHE_DIR / code_4
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / f"{date.today().isoformat()}.json"
+    cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+
+
+def fetch_stock_info(code_4, max_retries=3, use_cache=True):
     """
     証券コード（4桁）から株価情報を取得。
+    同日中はキャッシュから返す（前日終値は日中変わらないため）。
     レート制限時は最大max_retries回リトライ。
 
     Returns: dict with keys:
@@ -64,6 +93,12 @@ def fetch_stock_info(code_4, max_retries=3):
         market_cap: 時価総額（百万円）
         company_name_en: 企業名（英語）
     """
+    # キャッシュチェック
+    if use_cache:
+        cached = _load_stock_cache(code_4)
+        if cached:
+            return cached
+
     _disable_ssl_verification()
 
     for attempt in range(max_retries):
@@ -105,12 +140,19 @@ def fetch_stock_info(code_4, max_retries=3):
             elif stock_price and shares:
                 market_cap_millions = int(stock_price * shares / 1_000_000)
 
-            return {
+            result = {
                 'stock_price': stock_price,
                 'shares_outstanding': shares_thousands,
                 'market_cap': market_cap_millions,
                 'company_name_en': info.get('shortName', ''),
             }
+            # キャッシュ保存
+            if use_cache:
+                try:
+                    _save_stock_cache(code_4, result)
+                except Exception:
+                    pass
+            return result
 
         except Exception as e:
             err_msg = str(e)
