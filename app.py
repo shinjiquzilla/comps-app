@@ -551,31 +551,123 @@ if st.session_state.generation_done:
 
             df_summary = pd.DataFrame(summary_rows)
 
-            # 数値列をfloat型に統一（Noneはnan）→ ソートが正しく動作する
+            # 数値列をfloat型に統一
             _num_cols = ['株価（円）', '時価総額（百万円）', 'EV（百万円）',
                          '売上高LTM（百万円）', '営業利益LTM（百万円）', 'EBITDA LTM（百万円）',
                          'EV/EBITDA LTM', 'FY PER', '直近四半期PBR', '配当利回り']
             for col in _num_cols:
                 df_summary[col] = pd.to_numeric(df_summary[col], errors='coerce')
 
-            # NumberColumn: 自動右揃え＋ネイティブソート＋フォーマット
-            _col_config = {
-                'コード': st.column_config.TextColumn('コード'),
-                '企業名': st.column_config.TextColumn('企業名'),
-                '株価（円）': st.column_config.NumberColumn('株価（円）', format="%,.0f"),
-                '時価総額（百万円）': st.column_config.NumberColumn('時価総額（百万円）', format="%,.0f"),
-                'EV（百万円）': st.column_config.NumberColumn('EV（百万円）', format="%,.0f"),
-                '売上高LTM（百万円）': st.column_config.NumberColumn('売上高LTM（百万円）', format="%,.0f"),
-                '営業利益LTM（百万円）': st.column_config.NumberColumn('営業利益LTM（百万円）', format="%,.0f"),
-                'EBITDA LTM（百万円）': st.column_config.NumberColumn('EBITDA LTM（百万円）', format="%,.0f"),
-                'EV/EBITDA LTM': st.column_config.NumberColumn('EV/EBITDA LTM', format="%.1fx"),
-                'FY PER': st.column_config.NumberColumn('FY PER', format="%.1fx"),
-                '直近四半期PBR': st.column_config.NumberColumn('直近四半期PBR', format="%.2fx"),
-                '配当利回り': st.column_config.NumberColumn('配当利回り', format="%.1f%%"),
+            # フォーマット関数
+            def _fmt_int(v):
+                return f"{int(v):,}" if pd.notna(v) else "—"
+            def _fmt_1f_x(v):
+                return f"{v:.1f}x" if pd.notna(v) else "—"
+            def _fmt_2f_x(v):
+                return f"{v:.2f}x" if pd.notna(v) else "—"
+            def _fmt_pct(v):
+                return f"{v:.1f}%" if pd.notna(v) else "—"
+            _fmt_map = {
+                '株価（円）': _fmt_int, '時価総額（百万円）': _fmt_int,
+                'EV（百万円）': _fmt_int, '売上高LTM（百万円）': _fmt_int,
+                '営業利益LTM（百万円）': _fmt_int, 'EBITDA LTM（百万円）': _fmt_int,
+                'EV/EBITDA LTM': _fmt_1f_x, 'FY PER': _fmt_1f_x,
+                '直近四半期PBR': _fmt_2f_x, '配当利回り': _fmt_pct,
             }
+            _right_cols = set(_num_cols)
 
-            st.dataframe(df_summary, use_container_width=True, hide_index=True,
-                         column_config=_col_config)
+            # テーブルデータをJSON化（ソート用に生数値も保持）
+            import json as _tbl_json
+            _tbl_rows = []
+            for _, row in df_summary.iterrows():
+                _r = {}
+                for col in df_summary.columns:
+                    raw = row[col]
+                    fmt_fn = _fmt_map.get(col)
+                    _r[col] = {
+                        'raw': float(raw) if pd.notna(raw) and col in _right_cols else (raw if pd.notna(raw) else None),
+                        'display': fmt_fn(raw) if fmt_fn else (str(raw) if pd.notna(raw) else '—'),
+                    }
+                _tbl_rows.append(_r)
+            _cols_json = _tbl_json.dumps(list(df_summary.columns), ensure_ascii=False)
+            _rows_json = _tbl_json.dumps(_tbl_rows, ensure_ascii=False)
+            _right_json = _tbl_json.dumps(list(_right_cols), ensure_ascii=False)
+
+            # JavaScript付きHTMLテーブル（列ヘッダークリックでソート）
+            _table_height = 80 + len(df_summary) * 38
+            import streamlit.components.v1 as components
+            components.html(f"""
+<style>
+  body {{ margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size:14px; }}
+  table {{ width:100%; border-collapse:collapse; }}
+  th {{ padding:8px 12px; border-bottom:2px solid #ddd; cursor:pointer; user-select:none; white-space:nowrap; background:#fafafa; position:sticky; top:0; }}
+  th:hover {{ background:#f0f0f0; }}
+  td {{ padding:6px 12px; border-bottom:1px solid #eee; white-space:nowrap; }}
+  tr:hover {{ background:#f8f8ff; }}
+  .sort-arrow {{ font-size:10px; margin-left:4px; color:#999; }}
+  .sort-arrow.active {{ color:#333; }}
+</style>
+<table id="comps-table">
+  <thead><tr id="header-row"></tr></thead>
+  <tbody id="table-body"></tbody>
+</table>
+<script>
+const cols = {_cols_json};
+const rows = {_rows_json};
+const rightCols = new Set({_right_json});
+let sortCol = null;
+let sortAsc = true;
+
+function render() {{
+  const sorted = [...rows];
+  if (sortCol !== null) {{
+    sorted.sort((a, b) => {{
+      const av = a[sortCol].raw;
+      const bv = b[sortCol].raw;
+      if (av === null && bv === null) return 0;
+      if (av === null) return 1;
+      if (bv === null) return -1;
+      return sortAsc ? (av < bv ? -1 : av > bv ? 1 : 0) : (av > bv ? -1 : av < bv ? 1 : 0);
+    }});
+  }}
+  // Header
+  const hr = document.getElementById('header-row');
+  hr.innerHTML = '';
+  cols.forEach(col => {{
+    const th = document.createElement('th');
+    const align = rightCols.has(col) ? 'right' : 'left';
+    th.style.textAlign = align;
+    let arrow = '';
+    if (sortCol === col) {{
+      arrow = sortAsc ? ' <span class="sort-arrow active">▲</span>' : ' <span class="sort-arrow active">▼</span>';
+    }} else {{
+      arrow = ' <span class="sort-arrow">▲▼</span>';
+    }}
+    th.innerHTML = col + arrow;
+    th.onclick = () => {{
+      if (sortCol === col) {{ sortAsc = !sortAsc; }}
+      else {{ sortCol = col; sortAsc = true; }}
+      render();
+    }};
+    hr.appendChild(th);
+  }});
+  // Body
+  const tb = document.getElementById('table-body');
+  tb.innerHTML = '';
+  sorted.forEach(row => {{
+    const tr = document.createElement('tr');
+    cols.forEach(col => {{
+      const td = document.createElement('td');
+      td.style.textAlign = rightCols.has(col) ? 'right' : 'left';
+      td.textContent = row[col].display;
+      tr.appendChild(td);
+    }});
+    tb.appendChild(tr);
+  }});
+}}
+render();
+</script>
+""", height=_table_height)
 
             # --- 決算短信セクション ---
             st.subheader("📄 決算短信")
