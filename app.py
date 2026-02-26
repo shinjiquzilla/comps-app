@@ -361,7 +361,11 @@ if st.session_state.generation_done:
                 tanshin = st.session_state.get('tanshin_forecasts', {}).get(c.get('code', ''), {})
                 ni_fwd = tanshin.get('ni_forecast') or c.get('ni_forecast')
                 mcap = c.get('market_cap')
+                stock_px = c.get('stock_price')
                 per_fwd = mcap / ni_fwd if mcap and ni_fwd and ni_fwd > 0 else None
+                # 配当利回り: 有報実績DPS / 現在株価
+                dps_actual = c.get('dps')
+                div_yield = dps_actual / stock_px if dps_actual and stock_px and stock_px > 0 else None
                 summary_rows.append({
                     'コード': c.get('code', ''),
                     '企業名': c.get('name', ''),
@@ -373,6 +377,7 @@ if st.session_state.generation_done:
                     'EV/EBITDA LTM': f"{multiples['ev_ebitda_ltm']:.1f}x" if multiples.get('ev_ebitda_ltm') else 'N/A',
                     'FY PER': f"{per_fwd:.1f}x" if per_fwd else 'N/A',
                     '直近四半期PBR': f"{multiples['pbr']:.2f}x" if multiples.get('pbr') else 'N/A',
+                    '配当利回り': f"{div_yield:.1%}" if div_yield else 'N/A',
                 })
 
             df_summary = pd.DataFrame(summary_rows)
@@ -509,15 +514,14 @@ if st.session_state.generation_done:
                         pass
 
             # --- Step 3: 不足データの自動検出（アップロード処理の後に実行） ---
+            # DPS（配当利回り用）は有報から自動取得されるため、ここではPER用のni_forecastのみチェック
             _critical_missing = []   # PER計算不可（ni_forecast なし）
-            _optional_missing = []   # 配当利回りのみ不足（dps なし）
             for comp in companies_for_config:
                 code = comp.get('code', '')
                 if not code:
                     continue
                 tanshin = st.session_state.get('tanshin_forecasts', {}).get(code, {})
                 ni_forecast = tanshin.get('ni_forecast') or comp.get('ni_forecast')
-                dps_val = tanshin.get('dps') or comp.get('dps')
 
                 # 決算期を特定: EDINETの半期報periodEndから推定
                 _fy_label = ""
@@ -552,42 +556,22 @@ if st.session_state.generation_done:
                     suggestion = "最新の決算短信"
 
                 if not ni_forecast:
-                    reasons = ["PER（通期予想当期純利益が必要）"]
-                    if not dps_val:
-                        reasons.append("配当利回り（配当予想が必要）")
                     _critical_missing.append({
-                        'code': code,
-                        'name': code_name_map.get(code, ''),
-                        'reasons': reasons,
-                        'suggestion': suggestion,
-                    })
-                elif not dps_val:
-                    _optional_missing.append({
                         'code': code,
                         'name': code_name_map.get(code, ''),
                         'suggestion': suggestion,
                     })
 
             # --- Step 4: 不足状況の表示 ---
-            _ni_ok_count = len(candidate_codes) - len(_critical_missing)
             if _critical_missing:
                 st.error(f"❌ {len(_critical_missing)}/{len(candidate_codes)}社の業績予想が不足しています。")
                 for mi in _critical_missing:
-                    reasons_str = '、'.join(mi['reasons'])
                     st.warning(
-                        f"**{mi['code']} {mi['name']}**: {reasons_str}が計算できません。\n\n"
+                        f"**{mi['code']} {mi['name']}**: PER（通期予想当期純利益が必要）が計算できません。\n\n"
                         f"通期の業績予想が掲載されている **{mi['suggestion']}** をアップロードしてください。"
                     )
-            if _optional_missing:
-                for mi in _optional_missing:
-                    st.info(
-                        f"**{mi['code']} {mi['name']}**: 配当予想（DPS）が未取得です。"
-                        f"配当利回りの計算には手動入力が必要です。"
-                    )
-            if not _critical_missing and not _optional_missing:
-                st.success(f"✅ 全{len(candidate_codes)}社の業績予想・配当データが揃っています。")
-            elif not _critical_missing:
-                st.success(f"✅ 全{len(candidate_codes)}社の業績予想（PER計算用）は揃っています。")
+            else:
+                st.success(f"✅ 全{len(candidate_codes)}社の業績予想データが揃っています。")
 
             if _existing_files:
                 with st.expander(f"📁 保存済み決算短信（{len(_existing_files)}件）", expanded=False):
@@ -636,7 +620,7 @@ if st.session_state.generation_done:
                     _op_e_default = int(tanshin.get('op_forecast') or company.get('op_forecast') or 0)
                     _ni_e_default = int(tanshin.get('ni_forecast') or company.get('ni_forecast') or 0)
                     _ebitda_e_default = int(company.get('ebitda_forecast') or 0)
-                    _dps_default = float(tanshin.get('dps') or company.get('dps') or 0)
+                    _dps_default = float(company.get('dps') or 0)  # 有報記載の実績配当
 
                     with col3:
                         st.markdown("**BS（百万円）**")
@@ -646,7 +630,7 @@ if st.session_state.generation_done:
                                                key=f"debt_{idx}", step=1, format="%d")
                         eq = st.number_input("純資産（百万円）", value=int(company.get('equity_parent') or 0),
                                              key=f"eq_{idx}", step=1, format="%d")
-                        dps = st.number_input("DPS - 配当（円）", value=_dps_default,
+                        dps = st.number_input("DPS - 実績配当（円・有報）", value=_dps_default,
                                               key=f"dps_{idx}", step=1.0, format="%.1f")
 
                     col4, col5 = st.columns(2)

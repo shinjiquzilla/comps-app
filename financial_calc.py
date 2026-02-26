@@ -160,13 +160,16 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data):
     # EV
     ev = calc_ev(market_cap, total_debt, cash)
 
+    # DPS: 有報記載の直近終了フル年度の実績配当（予想ではなく実績）
+    dps_actual = yuho.get('dps')
+
     # マルチプル
     multiples = calc_multiples(
         market_cap, ev, ebitda_ltm,
         ebitda_fwd,
         forecast.get('ni_forecast'),
         equity, stock_price,
-        forecast.get('dps')
+        dps_actual
     )
 
     # BS日付
@@ -201,7 +204,7 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data):
         'op_forecast': op_fwd,
         'ni_forecast': forecast.get('ni_forecast'),
         'ebitda_forecast': ebitda_fwd,
-        'dps': forecast.get('dps'),
+        'dps': dps_actual,
         # デバッグ用
         '_ev': ev,
         '_multiples': multiples,
