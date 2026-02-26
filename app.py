@@ -233,12 +233,11 @@ if generate_btn:
                 time.sleep(3)
 
         progress_bar.progress(1.0)
-        status_container.success(f"✅ 完了: {len(codes)}社の処理が終わりました。下にスクロールして結果を確認してください。")
+        status_container.success(f"✅ 完了: {len(codes)}社の処理が終わりました。")
         progress_text.empty()
 
         st.session_state.company_data = results
         st.session_state.generation_done = True
-        st.rerun()
 
 # ---------------------------------------------------------------------------
 # Display Results
@@ -246,7 +245,8 @@ if generate_btn:
 
 if st.session_state.generation_done:
     try:
-        st.info(f"取得結果: {len(st.session_state.company_data)}社処理済み / エラー: {len(st.session_state.errors)}件")
+        st.divider()
+        st.subheader(f"取得結果: {len(st.session_state.company_data)}社処理済み / エラー: {len(st.session_state.errors)}件")
 
         if st.session_state.errors:
             with st.expander("⚠️ エラー・警告", expanded=True):
