@@ -551,65 +551,31 @@ if st.session_state.generation_done:
 
             df_summary = pd.DataFrame(summary_rows)
 
-            # 数値列をfloat型に統一（Noneはnan）→ ソート用
+            # 数値列をfloat型に統一（Noneはnan）→ ソートが正しく動作する
             _num_cols = ['株価（円）', '時価総額（百万円）', 'EV（百万円）',
                          '売上高LTM（百万円）', '営業利益LTM（百万円）', 'EBITDA LTM（百万円）',
                          'EV/EBITDA LTM', 'FY PER', '直近四半期PBR', '配当利回り']
             for col in _num_cols:
                 df_summary[col] = pd.to_numeric(df_summary[col], errors='coerce')
 
-            # ソートUI
-            _sort_col1, _sort_col2 = st.columns([2, 1])
-            with _sort_col1:
-                _sort_by = st.selectbox(
-                    "ソート", ['なし'] + _num_cols,
-                    index=0, key="summary_sort_col")
-            with _sort_col2:
-                _sort_order = st.radio(
-                    "順序", ['昇順', '降順'],
-                    index=1, horizontal=True, key="summary_sort_order")
-
-            if _sort_by != 'なし':
-                df_summary = df_summary.sort_values(
-                    _sort_by, ascending=(_sort_order == '昇順'), na_position='last'
-                ).reset_index(drop=True)
-
-            # 表示用フォーマット関数
-            def _fmt_int(v):
-                return f"{int(v):,}" if pd.notna(v) else "—"
-            def _fmt_1f_x(v):
-                return f"{v:.1f}x" if pd.notna(v) else "—"
-            def _fmt_2f_x(v):
-                return f"{v:.2f}x" if pd.notna(v) else "—"
-            def _fmt_pct(v):
-                return f"{v:.1f}%" if pd.notna(v) else "—"
-
-            _fmt_map = {
-                '株価（円）': _fmt_int, '時価総額（百万円）': _fmt_int,
-                'EV（百万円）': _fmt_int, '売上高LTM（百万円）': _fmt_int,
-                '営業利益LTM（百万円）': _fmt_int, 'EBITDA LTM（百万円）': _fmt_int,
-                'EV/EBITDA LTM': _fmt_1f_x, 'FY PER': _fmt_1f_x,
-                '直近四半期PBR': _fmt_2f_x, '配当利回り': _fmt_pct,
+            # NumberColumn: 自動右揃え＋ネイティブソート＋フォーマット
+            _col_config = {
+                'コード': st.column_config.TextColumn('コード'),
+                '企業名': st.column_config.TextColumn('企業名'),
+                '株価（円）': st.column_config.NumberColumn('株価（円）', format="%d"),
+                '時価総額（百万円）': st.column_config.NumberColumn('時価総額（百万円）', format="%d"),
+                'EV（百万円）': st.column_config.NumberColumn('EV（百万円）', format="%d"),
+                '売上高LTM（百万円）': st.column_config.NumberColumn('売上高LTM（百万円）', format="%d"),
+                '営業利益LTM（百万円）': st.column_config.NumberColumn('営業利益LTM（百万円）', format="%d"),
+                'EBITDA LTM（百万円）': st.column_config.NumberColumn('EBITDA LTM（百万円）', format="%d"),
+                'EV/EBITDA LTM': st.column_config.NumberColumn('EV/EBITDA LTM', format="%.1fx"),
+                'FY PER': st.column_config.NumberColumn('FY PER', format="%.1fx"),
+                '直近四半期PBR': st.column_config.NumberColumn('直近四半期PBR', format="%.2fx"),
+                '配当利回り': st.column_config.NumberColumn('配当利回り', format="%.1f%%"),
             }
 
-            # HTMLテーブル生成（数値列右揃え）
-            _right_cols = set(_num_cols)
-            _html = '<table style="width:100%; border-collapse:collapse; font-size:14px;">'
-            _html += '<thead><tr>'
-            for col in df_summary.columns:
-                _align = 'right' if col in _right_cols else 'left'
-                _html += f'<th style="text-align:{_align}; padding:6px 10px; border-bottom:2px solid #ddd; white-space:nowrap;">{col}</th>'
-            _html += '</tr></thead><tbody>'
-            for _, row in df_summary.iterrows():
-                _html += '<tr>'
-                for col in df_summary.columns:
-                    _align = 'right' if col in _right_cols else 'left'
-                    fmt_fn = _fmt_map.get(col)
-                    val = fmt_fn(row[col]) if fmt_fn else (row[col] if pd.notna(row[col]) else '—')
-                    _html += f'<td style="text-align:{_align}; padding:5px 10px; border-bottom:1px solid #eee; white-space:nowrap;">{val}</td>'
-                _html += '</tr>'
-            _html += '</tbody></table>'
-            st.markdown(_html, unsafe_allow_html=True)
+            st.dataframe(df_summary, use_container_width=True, hide_index=True,
+                         column_config=_col_config)
 
             # --- 決算短信セクション ---
             st.subheader("📄 決算短信")
