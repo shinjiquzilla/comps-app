@@ -486,9 +486,9 @@ if st.session_state.generation_done:
                 if _parsed_count:
                     st.success(f"✅ {_parsed_count}件の業績予想を抽出しました。")
                 for _pf_code, _pf_name, _pf_file in _parse_failures:
-                    st.error(
-                        f"❌ **{_pf_code} {_pf_name}**（{_pf_file}）: PDFは判定できましたが、"
-                        f"業績予想の抽出に失敗しました。手動入力で補完してください。"
+                    st.warning(
+                        f"**{_pf_code} {_pf_name}**（{_pf_file}）: "
+                        f"通期業績予想の記載が見つかりませんでした。下の手動補完セクションから入力してください。"
                     )
                     # デバッグ: PDFテキストの冒頭を表示
                     try:
