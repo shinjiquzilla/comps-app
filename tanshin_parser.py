@@ -118,23 +118,48 @@ def _extract_forecast(text):
 
         if forecast_section:
             # 「通期」ラベル付きデータ行の特別処理
-            # 例: "通期 25,000 4.4 800 — 800 — 550 — 51.88"
-            # 百万円（整数）と増減率/EPS（小数）が混在 → 整数のみ抽出
-            if re.search(r'通期', line_stripped):
+            # パターンA: 同一行に数値あり "通期 25,000 4.4 800 — 800 — 550 — 51.88"
+            # パターンB: 「通期」が単独行で数値が後続行（PyMuPDFのテーブル抽出）
+            if re.search(r'^通期$|^通期\s*$', line_stripped) or re.search(r'通期', line_stripped):
+                # 同一行の数値を取得
                 all_nums = re.findall(r'[△▲\-]?[\d,]+\.?\d*', line_stripped)
                 int_values = []
                 for n in all_nums:
                     if '.' in n:
-                        continue  # 小数 = 増減率 or EPS → スキップ
+                        continue
                     val = _parse_amount(n)
                     if val is not None:
                         int_values.append(val)
+
+                # 同一行で十分な数値が取れた場合
                 if len(int_values) >= 4:
                     result['rev_forecast'] = int_values[0]
                     result['op_forecast'] = int_values[1]
-                    # int_values[2] = 経常利益（スキップ）
                     result['ni_forecast'] = int_values[3]
                     break
+
+                # パターンB: 「通期」が単独行 → 後続行から数値を収集
+                if len(int_values) < 2:
+                    collected = []
+                    for j in range(i + 1, min(i + 20, len(lines))):
+                        next_line = lines[j].strip()
+                        if not next_line or next_line in ('－', '-', '―', '—'):
+                            continue
+                        # 次のセクションヘッダーに到達したら終了
+                        if re.search(r'配当|1株|注[）\)：:]|※', next_line):
+                            break
+                        nums_in_line = re.findall(r'[△▲\-]?[\d,]+\.?\d*', next_line)
+                        for n in nums_in_line:
+                            if '.' in n:
+                                continue  # 小数 = 増減率 or EPS → スキップ
+                            val = _parse_amount(n)
+                            if val is not None:
+                                collected.append(val)
+                    if len(collected) >= 4:
+                        result['rev_forecast'] = collected[0]
+                        result['op_forecast'] = collected[1]
+                        result['ni_forecast'] = collected[3]
+                        break
 
             # 増減率の行（%を含む）はスキップ
             if '%' in line_stripped or '％' in line_stripped:

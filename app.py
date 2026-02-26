@@ -477,7 +477,7 @@ if st.session_state.generation_done:
                             st.session_state.tanshin_forecasts[code] = parsed
                             _parsed_count += 1
                         else:
-                            _parse_failures.append((code, code_name_map.get(code, ''), ir['file'].name))
+                            _parse_failures.append((code, code_name_map.get(code, ''), ir['file'].name, ir['pdf_bytes']))
                         save_name = ident['suggested_filename'] or ir['file'].name
                         try:
                             save_tanshin_pdf(ir['pdf_bytes'], code, save_name)
@@ -485,7 +485,7 @@ if st.session_state.generation_done:
                             pass
                 if _parsed_count:
                     st.success(f"✅ {_parsed_count}件の業績予想を抽出しました。")
-                for _pf_code, _pf_name, _pf_file in _parse_failures:
+                for _pf_code, _pf_name, _pf_file, _pf_bytes in _parse_failures:
                     st.warning(
                         f"**{_pf_code} {_pf_name}**（{_pf_file}）: "
                         f"通期業績予想の記載が見つかりませんでした。下の手動補完セクションから入力してください。"
@@ -493,7 +493,7 @@ if st.session_state.generation_done:
                     # デバッグ: PDFテキストの冒頭を表示
                     try:
                         import fitz
-                        doc = fitz.open(stream=ir['pdf_bytes'], filetype="pdf")
+                        doc = fitz.open(stream=_pf_bytes, filetype="pdf")
                         _debug_text = ""
                         for _pg in range(min(3, len(doc))):
                             _debug_text += doc[_pg].get_text() + "\n"
