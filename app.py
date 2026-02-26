@@ -374,13 +374,15 @@ if st.session_state.generation_done:
             st.dataframe(df_summary, use_container_width=True, hide_index=True)
 
             # --- 決算短信セクション ---
+            st.subheader("📄 決算短信")
+
             if 'tanshin_forecasts' not in st.session_state:
                 st.session_state.tanshin_forecasts = {}
 
             candidate_codes = [c.get('code', '') for c in companies_for_config if c.get('code')]
             code_name_map = {c.get('code', ''): c.get('name', '') for c in companies_for_config}
 
-            # --- 保存済みPDFの自動パース ---
+            # --- Step 1: 保存済みPDFの自動パース ---
             from pathlib import Path
             _tanshin_base = Path(__file__).parent / "data" / "tanshin"
             _existing_files = []
@@ -397,7 +399,6 @@ if st.session_state.generation_done:
                             '期間': parts[1].replace('-', '/') + ' ' + _ptype_ja.get(parts[2], parts[2]),
                             'ファイル': pdf_path.name,
                         })
-                # 保存済みPDFから予想値を自動パース（session stateに未登録の場合）
                 if code not in st.session_state.tanshin_forecasts:
                     for pdf_path in sorted(code_dir.glob("tanshin_*.pdf"), reverse=True):
                         parsed = parse_tanshin_pdf(pdf_path.read_bytes())
@@ -405,85 +406,7 @@ if st.session_state.generation_done:
                             st.session_state.tanshin_forecasts[code] = parsed
                             break
 
-            # --- 不足データの自動検出 ---
-            _missing_items = []
-            for comp in companies_for_config:
-                code = comp.get('code', '')
-                if not code:
-                    continue
-                tanshin = st.session_state.get('tanshin_forecasts', {}).get(code, {})
-                ni_forecast = tanshin.get('ni_forecast') or comp.get('ni_forecast')
-                dps_val = tanshin.get('dps') or comp.get('dps')
-
-                missing_reasons = []
-                if not ni_forecast:
-                    missing_reasons.append("PER（通期予想当期純利益が必要）")
-                if not dps_val:
-                    missing_reasons.append("配当利回り（配当予想が必要）")
-
-                if missing_reasons:
-                    # 決算期を特定: EDINETの半期報periodEndから推定
-                    _fy_label = ""
-                    for r in st.session_state.company_data:
-                        if r.get('code') == code and r.get('edinet_raw'):
-                            hd = r['edinet_raw'].get('hanki_doc')
-                            if hd and hd.get('periodEnd'):
-                                pe = hd['periodEnd']  # "2026/03/31" or "2026-03-31"
-                                pe_clean = pe.replace('/', '-')
-                                parts = pe_clean.split('-')
-                                if len(parts) >= 2:
-                                    _fy_label = f"{parts[0]}年{int(parts[1])}月期"
-                            break
-
-                    # 最新の四半期を推定（決算月と現在日付から）
-                    _quarter_hint = ""
-                    if _fy_label:
-                        today = datetime.today()
-                        # 3月期の場合: Q1=4-6月, Q2=7-9月, Q3=10-12月, FY=1-3月
-                        # 決算短信は四半期末の約45日後に公開
-                        month = today.month
-                        if month in (1, 2, 3):
-                            _quarter_hint = "第3四半期"
-                        elif month in (4, 5):
-                            _quarter_hint = "通期"
-                        elif month in (6, 7, 8):
-                            _quarter_hint = "第1四半期"
-                        elif month in (9, 10, 11):
-                            _quarter_hint = "第2四半期"
-                        else:
-                            _quarter_hint = "第3四半期"
-
-                    suggestion = _fy_label
-                    if _quarter_hint:
-                        suggestion += f" {_quarter_hint}決算短信"
-                    if not suggestion:
-                        suggestion = "最新の決算短信"
-
-                    _missing_items.append({
-                        'code': code,
-                        'name': code_name_map.get(code, ''),
-                        'reasons': missing_reasons,
-                        'suggestion': suggestion,
-                    })
-
-            # --- 表示 ---
-            if _missing_items:
-                st.subheader("📄 決算短信アップロード")
-                for mi in _missing_items:
-                    reasons_str = '、'.join(mi['reasons'])
-                    st.warning(
-                        f"**{mi['code']} {mi['name']}**: {reasons_str}が計算できません。\n\n"
-                        f"通期の業績予想が掲載されている **{mi['suggestion']}** をアップロードしてください。"
-                    )
-            else:
-                st.subheader("📄 決算短信")
-                st.success("✅ 全社の業績予想・配当データが揃っています。追加アップロードは不要です。")
-
-            if _existing_files:
-                with st.expander(f"📁 保存済み決算短信（{len(_existing_files)}件）", expanded=False):
-                    st.dataframe(pd.DataFrame(_existing_files), use_container_width=True, hide_index=True)
-
-            # --- ファイルアップロード ---
+            # --- Step 2: アップロードファイルの処理（不足チェックの前に実行） ---
             uploaded_files = st.file_uploader(
                 "決算短信PDFをまとめてアップロード",
                 type=['pdf'],
@@ -542,7 +465,7 @@ if st.session_state.generation_done:
                 if _fail_files:
                     st.warning(f"⚠️ {len(_fail_files)}件は企業を判定できませんでした: {', '.join(_fail_files)}")
 
-                # 判定成功分を自動パース＆保存
+                # 判定成功分を自動パース＆保存（session stateを即時更新）
                 _parsed_count = 0
                 for ir in id_results:
                     ident = ir['identification']
@@ -558,7 +481,79 @@ if st.session_state.generation_done:
                         except Exception:
                             pass
                 if _parsed_count:
-                    st.success(f"✅ {_parsed_count}件の業績予想を抽出しました。下の予想値フィールドに反映されています。")
+                    st.success(f"✅ {_parsed_count}件の業績予想を抽出しました。")
+
+            # --- Step 3: 不足データの自動検出（アップロード処理の後に実行） ---
+            _missing_items = []
+            for comp in companies_for_config:
+                code = comp.get('code', '')
+                if not code:
+                    continue
+                tanshin = st.session_state.get('tanshin_forecasts', {}).get(code, {})
+                ni_forecast = tanshin.get('ni_forecast') or comp.get('ni_forecast')
+                dps_val = tanshin.get('dps') or comp.get('dps')
+
+                missing_reasons = []
+                if not ni_forecast:
+                    missing_reasons.append("PER（通期予想当期純利益が必要）")
+                if not dps_val:
+                    missing_reasons.append("配当利回り（配当予想が必要）")
+
+                if missing_reasons:
+                    # 決算期を特定: EDINETの半期報periodEndから推定
+                    _fy_label = ""
+                    for r in st.session_state.company_data:
+                        if r.get('code') == code and r.get('edinet_raw'):
+                            hd = r['edinet_raw'].get('hanki_doc')
+                            if hd and hd.get('periodEnd'):
+                                pe = hd['periodEnd']
+                                pe_clean = pe.replace('/', '-')
+                                parts = pe_clean.split('-')
+                                if len(parts) >= 2:
+                                    _fy_label = f"{parts[0]}年{int(parts[1])}月期"
+                            break
+
+                    # 最新の四半期を推定（決算月と現在日付から）
+                    _quarter_hint = ""
+                    if _fy_label:
+                        month = datetime.today().month
+                        if month in (1, 2, 3):
+                            _quarter_hint = "第3四半期"
+                        elif month in (4, 5):
+                            _quarter_hint = "通期"
+                        elif month in (6, 7, 8):
+                            _quarter_hint = "第1四半期"
+                        else:
+                            _quarter_hint = "第2四半期"
+
+                    suggestion = _fy_label
+                    if _quarter_hint:
+                        suggestion += f" {_quarter_hint}決算短信"
+                    if not suggestion:
+                        suggestion = "最新の決算短信"
+
+                    _missing_items.append({
+                        'code': code,
+                        'name': code_name_map.get(code, ''),
+                        'reasons': missing_reasons,
+                        'suggestion': suggestion,
+                    })
+
+            # --- Step 4: 不足状況の表示 ---
+            if _missing_items:
+                st.error(f"❌ {len(_missing_items)}/{len(candidate_codes)}社の決算短信データが不足しています。")
+                for mi in _missing_items:
+                    reasons_str = '、'.join(mi['reasons'])
+                    st.warning(
+                        f"**{mi['code']} {mi['name']}**: {reasons_str}が計算できません。\n\n"
+                        f"通期の業績予想が掲載されている **{mi['suggestion']}** をアップロードしてください。"
+                    )
+            else:
+                st.success(f"✅ 全{len(candidate_codes)}社の業績予想・配当データが揃っています。追加アップロードは不要です。")
+
+            if _existing_files:
+                with st.expander(f"📁 保存済み決算短信（{len(_existing_files)}件）", expanded=False):
+                    st.dataframe(pd.DataFrame(_existing_files), use_container_width=True, hide_index=True)
 
             # --- 手動補完セクション ---
             st.subheader("手動データ補完")
