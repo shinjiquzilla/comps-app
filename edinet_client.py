@@ -631,7 +631,30 @@ def _process_docs_for_company(session, api_key, code_4, docs, use_cache=True):
         zip_filename = _doc_filename(doc, "zip")
         pdf_filename = _doc_filename(doc, "pdf")
 
-        # --- CSV ZIP ---
+        # --- パース結果キャッシュを最優先チェック（ZIP読み込み不要） ---
+        parsed_cache_file = cache_dir / f"{doc_type}_parsed.json" if cache_dir else None
+        parsed_from_cache = False
+
+        if parsed_cache_file and parsed_cache_file.exists():
+            try:
+                import json
+                cached_parsed = json.loads(parsed_cache_file.read_text(encoding='utf-8'))
+                if doc_type == 'hanki':
+                    result['hanki_data'] = cached_parsed.get('current', {})
+                    result['hanki_prior_data'] = cached_parsed.get('prior', {})
+                    debug_info['hanki_prior_keys'] = list(result['hanki_prior_data'].keys())
+                else:
+                    result[f'{doc_type}_data'] = cached_parsed
+                parsed_from_cache = True
+                debug_info[f'{doc_type}_parsed_cache'] = True
+                debug_info[f'{doc_type}_cache_hit'] = True
+            except Exception:
+                pass
+
+        if parsed_from_cache:
+            continue  # ZIP/PDFの読み込み・ダウンロードを完全スキップ
+
+        # --- CSV ZIP（パース結果キャッシュがない場合のみ） ---
         zip_bytes = None
         cache_hit = False
 
@@ -650,25 +673,6 @@ def _process_docs_for_company(session, api_key, code_4, docs, use_cache=True):
 
         debug_info[f'{doc_type}_zip_size'] = len(zip_bytes)
         debug_info[f'{doc_type}_cache_hit'] = cache_hit
-
-        # パース結果キャッシュ: ZIP解凍＋CSVパースの結果をJSONで保存
-        parsed_cache_file = cache_dir / f"{doc_type}_parsed.json" if cache_dir else None
-        parsed_from_cache = False
-
-        if parsed_cache_file and parsed_cache_file.exists() and cache_hit:
-            try:
-                import json
-                cached_parsed = json.loads(parsed_cache_file.read_text(encoding='utf-8'))
-                if doc_type == 'hanki':
-                    result['hanki_data'] = cached_parsed.get('current', {})
-                    result['hanki_prior_data'] = cached_parsed.get('prior', {})
-                    debug_info['hanki_prior_keys'] = list(result['hanki_prior_data'].keys())
-                else:
-                    result[f'{doc_type}_data'] = cached_parsed
-                parsed_from_cache = True
-                debug_info[f'{doc_type}_parsed_cache'] = True
-            except Exception:
-                pass
 
         if not parsed_from_cache:
             lines = parse_csv_lines(zip_bytes)

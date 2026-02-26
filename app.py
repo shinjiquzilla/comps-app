@@ -221,7 +221,9 @@ if generate_btn:
             else:
                 uncached_codes = list(codes)
 
-            if cached_codes:
+            if cached_codes and not uncached_codes:
+                status_container.info(f"📄 EDINET: {len(cached_codes)}社すべてキャッシュから読み込み")
+            elif cached_codes:
                 status_container.info(f"📄 EDINET: {len(cached_codes)}社はキャッシュから読み込み、{len(uncached_codes)}社をAPI検索中...")
             else:
                 status_container.info(f"📄 EDINET: {len(codes)}社分を一括検索中（{search_days}日間）...")
