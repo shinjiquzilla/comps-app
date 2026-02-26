@@ -117,6 +117,25 @@ def _extract_forecast(text):
             continue
 
         if forecast_section:
+            # 「通期」ラベル付きデータ行の特別処理
+            # 例: "通期 25,000 4.4 800 — 800 — 550 — 51.88"
+            # 百万円（整数）と増減率/EPS（小数）が混在 → 整数のみ抽出
+            if re.search(r'通期', line_stripped):
+                all_nums = re.findall(r'[△▲\-]?[\d,]+\.?\d*', line_stripped)
+                int_values = []
+                for n in all_nums:
+                    if '.' in n:
+                        continue  # 小数 = 増減率 or EPS → スキップ
+                    val = _parse_amount(n)
+                    if val is not None:
+                        int_values.append(val)
+                if len(int_values) >= 4:
+                    result['rev_forecast'] = int_values[0]
+                    result['op_forecast'] = int_values[1]
+                    # int_values[2] = 経常利益（スキップ）
+                    result['ni_forecast'] = int_values[3]
+                    break
+
             # 増減率の行（%を含む）はスキップ
             if '%' in line_stripped or '％' in line_stripped:
                 continue
@@ -134,7 +153,7 @@ def _extract_forecast(text):
 
     # 数値行をパース
     # 典型パターン: 売上高, 営業利益, 経常利益, 純利益 の順に4つ以上の数値
-    if forecast_lines:
+    if not result and forecast_lines:
         for nums in forecast_lines:
             if len(nums) >= 4:
                 rev = _parse_amount(nums[0])
