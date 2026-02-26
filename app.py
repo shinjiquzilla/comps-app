@@ -161,18 +161,23 @@ if generate_btn:
         progress_text = st.empty()
 
         # ---- Step 0: 証券コード存在チェック ----
-        # 既にPDF格納済みの企業はスキップ（yfinance不要）
+        # ローカルにデータがある企業はyfinance検証をスキップ
         from pathlib import Path
+        from stock_fetcher import _load_stock_cache
         _tanshin_base = Path(__file__).parent / "data" / "tanshin"
+        _edinet_base = Path(__file__).parent / "data" / "edinet"
 
         status_container.info("🔍 証券コードを検証中...")
         invalid_codes = []
         valid_codes = []
         _need_yf_check = []
         for vc in codes:
-            local_dir = _tanshin_base / vc
-            if local_dir.is_dir() and any(local_dir.iterdir()):
-                valid_codes.append(vc)  # PDF格納済み → 検証不要
+            # ローカルキャッシュがあれば検証不要
+            _has_tanshin = (_tanshin_base / vc).is_dir() and any((_tanshin_base / vc).iterdir())
+            _has_edinet = (_edinet_base / vc / "meta.json").exists()
+            _has_stock = _load_stock_cache(vc) is not None
+            if _has_tanshin or _has_edinet or _has_stock:
+                valid_codes.append(vc)
             else:
                 _need_yf_check.append(vc)
 
