@@ -36,8 +36,20 @@ streamlit run app.py
 
 ## 主要な技術的判断
 
+### EDINET CSV パーサー（IFRS対応済み）
+- **J-GAAP**: `jppfs_cor:` プレフィックスの要素IDでマッチ
+- **IFRS**: `jpigp_cor:〜IFRS` プレフィックスの要素IDを追加済み（6779 日本電波工業で確認）
+- **連結フィルタ**: J-GAAPは`連結`、IFRSは`その他`。両方受け入れ、`個別`のみ除外
+- **会社固有プレフィックス対応**: 半期報告書で`jpcrp040300-ssr_E01807-000:〜IFRS`のようなプレフィックスが使われる場合、コロン以降の要素名部分で動的マッチ
+- **経営指標等（SUMMARY_ELEMENT_MAP）**: J-GAAP/IFRS両方の`jpcrp_cor:`要素をフォールバック用に登録
+
 ### LTM計算の制約
 `financial_calc.py:128` - EDINET CSVから前期H1が自動取得困難なため、**通期値をそのままLTMの代理値として使用**（近似）。正確なLTMは手動補完UIで修正する想定。
+
+### 手動補完UI
+- 株価・発行済株式数を手入力可能（yfinanceレート制限時の対応）
+- 入力値から時価総額・EV・EV/EBITDA・PER・PBRをリアルタイム自動計算（st.metric表示）
+- 金額は整数表示（百万円）、DPSは小数1桁（円）
 
 ### SSL検証バイパス
 社内ネットワーク対応のため、`CURL_CA_BUNDLE=''` と `REQUESTS_CA_BUNDLE=''` を設定。`stock_fetcher.py`と`app.py`の両方で設定。
@@ -77,6 +89,8 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
+| 2026/2/26 | d73ccfc | EDINET CSVパーサーにIFRS対応追加（6779空データ修正） |
+| 2026/2/26 | 5cb98db | 手動補完UIに株価・株式数入力＋マルチプル自動再計算を追加 |
 | 2026/2/26 | 31b775f | 手動補完UIの金額を整数（百万円）表示に変更 |
 | 2026/2/26 | d25c30c | EDINET periodEnd=Noneでのソートクラッシュ修正 |
 | 2026/2/26 | 8fc1b25 | yfinanceレート制限対策（リトライ+バックオフ+社間ディレイ） |
@@ -88,8 +102,17 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 | 2026/2/25 | a21e95c | runtime.txt追加、type hint互換性修正 |
 | 〜2026/2/25 | 初期構築 | EDINET/TDnet/yfinance連携、手動補完UI、Excel出力 |
 
+## 対象企業の会計基準
+| コード | 会社名 | 会計基準 | EDINET取得状況 |
+|--------|--------|---------|---------------|
+| 6763 | 帝国通信工業 | J-GAAP | OK |
+| 6989 | 北陸電気工業 | J-GAAP | OK |
+| 6768 | タムラ製作所 | J-GAAP | OK（TDnet予想なし） |
+| 6779 | 日本電波工業 | IFRS | IFRS対応後OK（要確認） |
+
 ## 既知の課題・TODO
 - LTM計算が通期値の近似になっている（前期H1自動取得未対応）
-- TDnet決算短信PDFの業績予想抽出は正規表現ベースで、フォーマット差異に弱い
+- TDnet決算短信PDFの業績予想抽出は正規表現ベースで、フォーマット差異に弱い（6768/6779で tanshin_count=0）
 - EDINET APIは1日1リクエスト/秒のレート制限あり（`time.sleep(1)`で対応済み）
 - TDnet検索の高速化（日付範囲の絞り込み、キャッシュ等）が今後の改善候補
+- yfinanceレート制限は完全には回避できない→手動株価入力で代替可能
