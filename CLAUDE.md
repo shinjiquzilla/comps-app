@@ -16,6 +16,7 @@ streamlit run app.py
 | `app.py` | Streamlit UI・メインフロー | `process_company()` |
 | `edinet_client.py` | EDINET API type=5 CSV取得・パース | `fetch_company_financials()` |
 | `tdnet_client.py` | TDnetスクレイピング+PyMuPDF PDF解析（**無効化済み**: TDnetは有料サービスでログイン必要） | `fetch_tanshin_forecasts()` |
+| `tanshin_parser.py` | 決算短信PDFパーサー（業績予想自動抽出） | `parse_tanshin_pdf()`, `save_tanshin_pdf()` |
 | `stock_fetcher.py` | yfinance株価取得 | `fetch_stock_info()` |
 | `financial_calc.py` | LTM・EBITDA・EV・マルチプル計算 | `build_company_data()` |
 | `comps_generator.py` | Excel Comps表生成（openpyxl） | `generate_comps(config, path)` |
@@ -42,8 +43,11 @@ streamlit run app.py
 - **会社固有プレフィックス対応**: 半期報告書で`jpcrp040300-ssr_E01807-000:〜IFRS`のようなプレフィックスが使われる場合、コロン以降の要素名部分で動的マッチ
 - **経営指標等（SUMMARY_ELEMENT_MAP）**: J-GAAP/IFRS両方の`jpcrp_cor:`要素をフォールバック用に登録
 
-### LTM計算の制約
-`financial_calc.py:128` - EDINET CSVから前期H1が自動取得困難なため、**通期値をそのままLTMの代理値として使用**（近似）。正確なLTMは手動補完UIで修正する想定。
+### LTM計算（Calendarize対応済み）
+`edinet_client.py` の `extract_financial_data(include_prior=True)` で半期報告書CSVから前期H1データ（`相対年度=前中間期/前中間期末`）を抽出。`financial_calc.py` の `build_company_data()` で **正確なLTM = FY通期 − 前期H1 + 今期H1** を自動計算。前期H1が取れない場合は通期値にフォールバック。
+
+### 決算短信パーサー
+`tanshin_parser.py` — PyMuPDF（`fitz`）で決算短信PDFからテキスト抽出し、正規表現で業績予想（売上高・営業利益・純利益・DPS）をパース。パース失敗時は空dictを返し手動入力にフォールバック。アップロードPDFは `data/tanshin/{code_4}/` にローカル保存。
 
 ### 手動補完UI
 - 株価・発行済株式数を手入力可能（yfinanceレート制限時の対応）
@@ -90,6 +94,7 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
+| 2026/2/26 | — | Calendarize: 正確なLTM計算（前期H1自動抽出）+ 決算短信PDFアップロード＆パース |
 | 2026/2/26 | 522831e | TDnet機能を完全無効化（有料サービスでログイン必要）、検索期間400日に戻す |
 | 2026/2/26 | 0392c01 | EDINET一括検索で高速化（N社×日数→1×日数） |
 | 2026/2/26 | d73ccfc | EDINET CSVパーサーにIFRS対応追加（6779空データ修正） |
@@ -114,7 +119,7 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 | 6779 | 日本電波工業 | IFRS | IFRS対応後OK（要確認） |
 
 ## 既知の課題・TODO
-- LTM計算が通期値の近似になっている（前期H1自動取得未対応）
-- TDnet機能は無効化済み（有料サービス）。業績予想は手動入力で対応
+- TDnet機能は無効化済み（有料サービス）。業績予想は決算短信PDFアップロード or 手動入力で対応
+- 決算短信パーサーは東証規定フォーマットを前提。企業ごとの微差でパース失敗する場合あり
 - EDINET APIは1日1リクエスト/秒のレート制限あり（`time.sleep(1)`で対応済み）
 - yfinanceレート制限は完全には回避できない→手動株価入力で代替可能

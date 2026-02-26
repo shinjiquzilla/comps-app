@@ -93,23 +93,14 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data):
     """
     yuho = edinet_data.get('yuho_data', {})
     hanki = edinet_data.get('hanki_data', {})
+    hanki_prior = edinet_data.get('hanki_prior_data', {})
     forecast = tdnet_data.get('forecast', {})
     company_name = edinet_data.get('company_name', '')
 
     # --- LTM計算 ---
-    rev_ltm = calc_ltm(
-        yuho.get('revenue'),
-        yuho.get('revenue'),  # H1は半期報告書から
-        hanki.get('revenue')
-    )
-    # 注: yuho_data は通期データ、hanki_data は今期H1データ
-    # 前期H1は有報からは直接取れないので、半期報告書に含まれる前期比較値を使う
-    # 簡略化: 半期報告書がある場合はそのH1値、有報の値は通期値として扱う
-
-    # 有報 = FY通期、半期報 = 今期H1
-    # LTM計算には前期H1が必要だが、EDINET CSVからは直接取れないことがある
-    # → 半期報告書に前期同期の値が含まれていればそれを使う
-    # → なければ通期値をそのまま LTM として使用（近似）
+    # 有報 = FY通期、半期報 = 今期H1、hanki_prior = 前期H1
+    # 正確なLTM = FY通期 − 前期H1 + 今期H1
+    # フォールバック: 前期H1が取れなければ通期値をそのまま使用（近似）
 
     fy_revenue = yuho.get('revenue')
     fy_op = yuho.get('operating_income')
@@ -121,14 +112,24 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data):
     h1_ni = hanki.get('net_income')
     h1_da = hanki.get('depreciation')
 
-    # LTM近似: 有報通期値がベース
-    # 半期報告書がある場合、LTM = 通期 - (通期/2推定) + H1 として近似
-    # 実際にはH1前期が必要だが、EDINET CSVから自動取得困難な場合が多い
-    # → 通期値をそのままLTMの代理値として使用
-    rev_ltm = fy_revenue
-    op_ltm = fy_op
-    ni_ltm = fy_ni
-    da_ltm = fy_da
+    prior_h1_revenue = hanki_prior.get('revenue')
+    prior_h1_op = hanki_prior.get('operating_income')
+    prior_h1_ni = hanki_prior.get('net_income')
+    prior_h1_da = hanki_prior.get('depreciation')
+
+    # 正確なLTM（前期H1が取れた場合）、フォールバックは通期値
+    rev_ltm = calc_ltm(fy_revenue, prior_h1_revenue, h1_revenue)
+    if rev_ltm is None:
+        rev_ltm = fy_revenue
+    op_ltm = calc_ltm(fy_op, prior_h1_op, h1_op)
+    if op_ltm is None:
+        op_ltm = fy_op
+    ni_ltm = calc_ltm(fy_ni, prior_h1_ni, h1_ni)
+    if ni_ltm is None:
+        ni_ltm = fy_ni
+    da_ltm = calc_ltm(fy_da, prior_h1_da, h1_da)
+    if da_ltm is None:
+        da_ltm = fy_da
 
     # EBITDA
     ebitda_ltm = None

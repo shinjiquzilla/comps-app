@@ -28,10 +28,11 @@ import pandas as pd
 # 自身のディレクトリをパスに追加
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from edinet_client import fetch_company_financials, fetch_companies_batch, load_api_key
+from edinet_client import fetch_company_financials, fetch_companies_batch, load_api_key, clear_cache, load_cached_meta
 from stock_fetcher import fetch_stock_info
 from financial_calc import build_company_data
 from comps_generator import generate_comps
+from tanshin_parser import parse_tanshin_pdf, save_tanshin_pdf
 
 # ---------------------------------------------------------------------------
 # Page Config
@@ -73,6 +74,14 @@ with st.sidebar:
 
     search_days = st.slider("検索期間（日数）", 30, 730, 400, step=30,
                             help="EDINETを過去何日分検索するか（有報は決算後3ヶ月、半期報も同様に提出されるため、400日程度が推奨）")
+
+    st.divider()
+    st.subheader("キャッシュ設定")
+    use_cache = st.checkbox("キャッシュを使用", value=True,
+                            help="ダウンロード済みのEDINETデータをローカルに保存し、次回以降はAPIアクセスをスキップします")
+    if st.button("キャッシュをクリア"):
+        clear_cache()
+        st.success("キャッシュを全削除しました。")
 
     st.divider()
 
@@ -142,7 +151,23 @@ if generate_btn:
         # ---- Step 1: EDINET一括検索（全社まとめて1回の日付ループ） ----
         edinet_results = {}  # code_4 -> edinet_data
         if edinet_available:
-            status_container.info(f"📄 EDINET: {len(codes)}社分を一括検索中（{search_days}日間）...")
+            # キャッシュ状況を確認
+            cached_codes = []
+            uncached_codes = []
+            if use_cache:
+                for c in codes:
+                    meta = load_cached_meta(c)
+                    if meta and meta.get("docs") is not None:
+                        cached_codes.append(c)
+                    else:
+                        uncached_codes.append(c)
+            else:
+                uncached_codes = list(codes)
+
+            if cached_codes:
+                status_container.info(f"📄 EDINET: {len(cached_codes)}社はキャッシュから読み込み、{len(uncached_codes)}社をAPI検索中...")
+            else:
+                status_container.info(f"📄 EDINET: {len(codes)}社分を一括検索中（{search_days}日間）...")
 
             def edinet_progress(current, total):
                 progress_bar.progress(current / total * 0.6)  # 全体の60%をEDINETに割り当て
@@ -150,8 +175,11 @@ if generate_btn:
 
             try:
                 edinet_results = fetch_companies_batch(
-                    codes, days=search_days, progress_callback=edinet_progress
+                    codes, days=search_days, progress_callback=edinet_progress,
+                    use_cache=use_cache
                 )
+                if cached_codes and not uncached_codes:
+                    progress_bar.progress(0.6)
             except Exception as e:
                 st.session_state.errors.append(f"EDINET一括検索エラー: {e}")
         else:
@@ -248,6 +276,7 @@ if st.session_state.generation_done:
                         'company_name': ed.get('company_name', ''),
                         'yuho_data': ed.get('yuho_data', {}),
                         'hanki_data': ed.get('hanki_data', {}),
+                        'hanki_prior_data': ed.get('hanki_prior_data', {}),
                         'yuho_doc_id': ed.get('yuho_doc', {}).get('docID') if ed.get('yuho_doc') else None,
                         'hanki_doc_id': ed.get('hanki_doc', {}).get('docID') if ed.get('hanki_doc') else None,
                         '_debug': ed.get('_debug', {}),
@@ -286,6 +315,38 @@ if st.session_state.generation_done:
 
             df_summary = pd.DataFrame(summary_rows)
             st.dataframe(df_summary, use_container_width=True, hide_index=True)
+
+            # --- 決算短信アップロードセクション ---
+            st.subheader("📄 決算短信アップロード（任意）")
+            st.caption("決算短信PDFをアップロードすると、業績予想値を自動抽出して下の予想値フィールドにプリフィルします。")
+
+            if 'tanshin_forecasts' not in st.session_state:
+                st.session_state.tanshin_forecasts = {}
+
+            tanshin_cols = st.columns(len(companies_for_config))
+            for t_idx, (t_col, comp) in enumerate(zip(tanshin_cols, companies_for_config)):
+                code = comp.get('code', '')
+                with t_col:
+                    uploaded = st.file_uploader(
+                        f"{code} {comp.get('name', '')}",
+                        type=['pdf'],
+                        key=f"tanshin_{t_idx}",
+                    )
+                    if uploaded is not None:
+                        pdf_bytes = uploaded.read()
+                        parsed = parse_tanshin_pdf(pdf_bytes)
+                        if parsed:
+                            st.session_state.tanshin_forecasts[code] = parsed
+                            st.success(f"✅ {len(parsed)}項目を抽出")
+                            with st.expander("抽出結果", expanded=False):
+                                st.json(parsed)
+                        else:
+                            st.warning("パース失敗: 手動入力で補完してください")
+                        # ローカル保存
+                        try:
+                            save_tanshin_pdf(pdf_bytes, code, uploaded.name)
+                        except Exception:
+                            pass  # 保存失敗は非致命的
 
             # --- 手動補完セクション ---
             st.subheader("手動データ補完")
@@ -332,19 +393,29 @@ if st.session_state.generation_done:
                                                key=f"debt_{idx}", step=1, format="%d")
                         eq = st.number_input("純資産（百万円）", value=int(company.get('equity_parent') or 0),
                                              key=f"eq_{idx}", step=1, format="%d")
-                        dps = st.number_input("DPS - 配当（円）", value=float(company.get('dps') or 0),
+                        dps = st.number_input("DPS - 配当（円）", value=_dps_default,
                                               key=f"dps_{idx}", step=1.0, format="%.1f")
+
+                    # 決算短信の抽出値があれば予想値にプリフィル
+                    tanshin = st.session_state.get('tanshin_forecasts', {}).get(company.get('code', ''), {})
+                    _rev_e_default = int(tanshin.get('rev_forecast') or company.get('rev_forecast') or 0)
+                    _op_e_default = int(tanshin.get('op_forecast') or company.get('op_forecast') or 0)
+                    _ni_e_default = int(tanshin.get('ni_forecast') or company.get('ni_forecast') or 0)
+                    _ebitda_e_default = int(company.get('ebitda_forecast') or 0)
+                    _dps_default = float(tanshin.get('dps') or company.get('dps') or 0)
 
                     col4, col5 = st.columns(2)
                     with col4:
                         st.markdown("**予想値 - FY E（百万円）**")
-                        rev_e = st.number_input("売上高予想（百万円）", value=int(company.get('rev_forecast') or 0),
+                        if tanshin:
+                            st.caption("📄 決算短信から自動プリフィル済み")
+                        rev_e = st.number_input("売上高予想（百万円）", value=_rev_e_default,
                                                 key=f"reve_{idx}", step=1, format="%d")
-                        op_e = st.number_input("営業利益予想（百万円）", value=int(company.get('op_forecast') or 0),
+                        op_e = st.number_input("営業利益予想（百万円）", value=_op_e_default,
                                                key=f"ope_{idx}", step=1, format="%d")
-                        ni_e = st.number_input("純利益予想（百万円）", value=int(company.get('ni_forecast') or 0),
+                        ni_e = st.number_input("純利益予想（百万円）", value=_ni_e_default,
                                                key=f"nie_{idx}", step=1, format="%d")
-                        ebitda_e = st.number_input("EBITDA予想（百万円）", value=int(company.get('ebitda_forecast') or 0),
+                        ebitda_e = st.number_input("EBITDA予想（百万円）", value=_ebitda_e_default,
                                                    key=f"ebitdae_{idx}", step=1, format="%d")
 
                     # --- 時価総額・EV・マルチプル自動計算 ---

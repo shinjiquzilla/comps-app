@@ -13,6 +13,7 @@ EDINET type=5 CSV 仕様:
 """
 
 import io
+import json
 import os
 import time
 import zipfile
@@ -113,6 +114,75 @@ SUMMARY_ELEMENT_MAP = {
     'jpcrp_cor:EquityToAssetRatioIFRSSummaryOfBusinessResults': 'equity_ratio',
     'jpcrp_cor:DividendPaidPerShareIFRSSummaryOfBusinessResults': 'dps',
 }
+
+
+# ---------------------------------------------------------------------------
+# Local Cache
+# ---------------------------------------------------------------------------
+
+CACHE_BASE = Path(__file__).parent / "data" / "edinet"
+
+
+def get_cache_dir(code_4):
+    """data/edinet/{code_4}/ のパスを返す。なければ作成。"""
+    d = CACHE_BASE / str(code_4)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _doc_filename(doc, ext):
+    """書類の命名: {yuho|hanki}_{periodEnd}_{docID}.{ext}"""
+    dt = doc.get("docTypeCode", "")
+    prefix = "yuho" if dt in ("120", "130") else "hanki"
+    period = (doc.get("periodEnd") or "unknown").replace("/", "-")
+    doc_id = doc.get("docID", "unknown")
+    return f"{prefix}_{period}_{doc_id}.{ext}"
+
+
+def load_cached_meta(code_4):
+    """meta.json を読み込む。なければ None。"""
+    meta_path = CACHE_BASE / str(code_4) / "meta.json"
+    if not meta_path.exists():
+        return None
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def save_meta(code_4, docs, search_days, company_name=""):
+    """meta.json に書類検索結果を保存。"""
+    d = get_cache_dir(code_4)
+    meta = {
+        "last_searched": datetime.today().strftime("%Y-%m-%d"),
+        "search_days": search_days,
+        "company_name": company_name,
+        "docs": [
+            {
+                "docID": doc.get("docID"),
+                "docTypeCode": doc.get("docTypeCode"),
+                "periodEnd": doc.get("periodEnd"),
+                "filerName": doc.get("filerName"),
+                "secCode": doc.get("secCode"),
+            }
+            for doc in docs
+        ],
+    }
+    with open(d / "meta.json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+
+def clear_cache(code_4=None):
+    """キャッシュ削除。code_4 指定で1社、None で全社。"""
+    import shutil
+    if code_4:
+        target = CACHE_BASE / str(code_4)
+        if target.exists():
+            shutil.rmtree(target)
+    else:
+        if CACHE_BASE.exists():
+            shutil.rmtree(CACHE_BASE)
 
 
 def to_sec_code(code: str) -> str:
@@ -265,6 +335,14 @@ def download_csv_zip(session, api_key, doc_id):
     return resp.content
 
 
+def download_pdf(session, api_key, doc_id):
+    """EDINET API type=2 (PDF) をダウンロードしてバイトで返す。"""
+    url = f"{EDINET_API_BASE}/documents/{doc_id}"
+    params = {"type": 2, "Subscription-Key": api_key}
+    resp = request_with_retry(session, url, params=params, stream=True)
+    return resp.content
+
+
 def parse_csv_lines(zip_bytes):
     """
     type=5 ZIP からメインの財務CSVを読み込み、行リストで返す。
@@ -306,20 +384,32 @@ def parse_csv_lines(zip_bytes):
     return []
 
 
-def extract_financial_data(zip_bytes):
+def extract_financial_data(zip_bytes, include_prior=False):
     """
     type=5 CSV ZIP から財務数値を抽出。
 
     CSVカラム: "要素ID" "項目名" "コンテキストID" "相対年度" "連結・個別" "期間・時点" "ユニットID" "単位" "値"
     インデックス:   0       1         2              3          4            5           6        7      8
 
-    Returns: dict of financial values (百万円単位に変換済み)
+    Parameters:
+        zip_bytes: type=5 CSV ZIP のバイト列
+        include_prior: True の場合、前期データも別dictで返す
+
+    Returns:
+        include_prior=False: dict（従来通り当期データのみ）
+        include_prior=True:  {'current': dict, 'prior': dict}
     """
     lines = parse_csv_lines(zip_bytes)
     if not lines:
-        return {}
+        return {} if not include_prior else {'current': {}, 'prior': {}}
 
     result = {}
+    prior_result = {}
+
+    # 当期（有報: 当期/当期末、半期報: 当中間期/当中間期末）
+    current_periods = ('当期', '当期末', '当中間期', '当中間期末')
+    # 前期（有報: 前期/前期末、半期報: 前中間期/前中間期末）
+    prior_periods = ('前期', '前期末', '前中間期', '前中間期末')
 
     for line in lines[1:]:  # ヘッダースキップ
         parts = line.split('\t')
@@ -340,9 +430,10 @@ def extract_financial_data(zip_bytes):
         unit = clean(parts[7])
         value_str = clean(parts[8])
 
-        # 当期（有報: 当期/当期末、半期報: 当中間期/当中間期末）
-        current_periods = ('当期', '当期末', '当中間期', '当中間期末')
-        if relative_year not in current_periods:
+        # 当期 or 前期を判定
+        is_current = relative_year in current_periods
+        is_prior = include_prior and relative_year in prior_periods
+        if not is_current and not is_prior:
             continue
         # 連結 or その他（IFRS企業は「その他」）を受け入れ。個別は除外。
         if consolidated not in ('連結', 'その他'):
@@ -366,8 +457,11 @@ def extract_financial_data(zip_bytes):
         if key is None:
             continue
 
+        # 格納先を選択
+        target = result if is_current else prior_result
+
         # 既に値がある場合はスキップ（最初の一致を優先）
-        if key in result:
+        if key in target:
             continue
 
         # 値のパース
@@ -383,19 +477,21 @@ def extract_financial_data(zip_bytes):
         if unit == '円' or unit == 'JPY':
             if key == 'equity_ratio':
                 # %表記の場合（0.829 等）→ そのまま
-                result[key] = val
+                target[key] = val
             elif key == 'dps':
                 # 1株あたり配当は円のまま
-                result[key] = val
+                target[key] = val
             else:
-                result[key] = val / 1_000_000  # 百万円
+                target[key] = val / 1_000_000  # 百万円
         else:
             # 株数等
             if key in ('shares_issued', 'treasury_shares'):
-                result[key] = val / 1_000  # 千株
+                target[key] = val / 1_000  # 千株
             else:
-                result[key] = val
+                target[key] = val
 
+    if include_prior:
+        return {'current': result, 'prior': prior_result}
     return result
 
 
@@ -403,47 +499,96 @@ def extract_financial_data(zip_bytes):
 # High-level API: 1社分の財務データ取得
 # ---------------------------------------------------------------------------
 
-def fetch_company_financials(code_4, days=90, progress_callback=None):
+def fetch_company_financials(code_4, days=90, progress_callback=None, use_cache=True):
     """
     証券コード（4桁）から EDINET type=5 CSV 経由で財務データを取得。
     """
     api_key = load_api_key()
     session = make_session(verify_ssl=False)
-    sec_code = to_sec_code(code_4)
 
+    # キャッシュ確認
+    if use_cache:
+        meta = load_cached_meta(code_4)
+        if meta and meta.get("docs") is not None:
+            return _process_docs_for_company(
+                session, api_key, code_4, meta["docs"], use_cache=True
+            )
+
+    sec_code = to_sec_code(code_4)
     docs = search_documents(session, api_key, sec_code, days=days,
                             progress_callback=progress_callback)
 
-    return _process_docs_for_company(session, api_key, code_4, docs)
+    result = _process_docs_for_company(session, api_key, code_4, docs, use_cache=use_cache)
+
+    # meta.json に保存
+    if use_cache and docs:
+        company_name = ""
+        for doc in docs:
+            name = doc.get("filerName", "")
+            if name:
+                company_name = name.replace("株式会社", "").strip()
+                break
+        save_meta(code_4, docs, days, company_name)
+
+    return result
 
 
-def fetch_companies_batch(codes_4, days=90, progress_callback=None):
+def fetch_companies_batch(codes_4, days=90, progress_callback=None, use_cache=True):
     """
     複数社の財務データを一括取得。EDINET日付検索は1回のみ。
+    use_cache=True の場合、ローカルキャッシュを優先し、EDINET APIアクセスを最小化する。
     Returns: dict {code_4: result_dict}
     """
     api_key = load_api_key()
     session = make_session(verify_ssl=False)
 
-    sec_codes = {to_sec_code(c): c for c in codes_4}  # 5桁→4桁の逆引き
-
-    # 全社まとめて書類検索（日付ループは1回だけ）
-    all_docs = search_documents_batch(
-        session, api_key, list(sec_codes.keys()), days=days,
-        progress_callback=progress_callback
-    )
-
-    # 各社のCSVダウンロード＆パース
     results = {}
-    for sec5, code4 in sec_codes.items():
-        docs = all_docs.get(sec5, [])
-        results[code4] = _process_docs_for_company(session, api_key, code4, docs)
+    codes_to_search = []  # キャッシュにない企業
+
+    # キャッシュ確認
+    if use_cache:
+        for code4 in codes_4:
+            meta = load_cached_meta(code4)
+            if meta and meta.get("docs") is not None:
+                # キャッシュ済み: meta.json の docs を使って処理
+                docs = meta["docs"]
+                results[code4] = _process_docs_for_company(
+                    session, api_key, code4, docs, use_cache=True
+                )
+            else:
+                codes_to_search.append(code4)
+    else:
+        codes_to_search = list(codes_4)
+
+    # キャッシュにない企業のみ EDINET 検索
+    if codes_to_search:
+        sec_codes = {to_sec_code(c): c for c in codes_to_search}
+
+        all_docs = search_documents_batch(
+            session, api_key, list(sec_codes.keys()), days=days,
+            progress_callback=progress_callback
+        )
+
+        for sec5, code4 in sec_codes.items():
+            docs = all_docs.get(sec5, [])
+            results[code4] = _process_docs_for_company(
+                session, api_key, code4, docs, use_cache=use_cache
+            )
+            # meta.json に保存
+            if use_cache and docs:
+                company_name = ""
+                for doc in docs:
+                    name = doc.get("filerName", "")
+                    if name:
+                        company_name = name.replace("株式会社", "").strip()
+                        break
+                save_meta(code4, docs, days, company_name)
 
     return results
 
 
-def _process_docs_for_company(session, api_key, code_4, docs):
-    """1社分の書類リストからCSVダウンロード・パースを行う。"""
+def _process_docs_for_company(session, api_key, code_4, docs, use_cache=True):
+    """1社分の書類リストからCSVダウンロード・パースを行う。キャッシュ対応。"""
     if not docs:
         return {
             'company_name': '',
@@ -467,30 +612,67 @@ def _process_docs_for_company(session, api_key, code_4, docs):
         'company_name': company_name,
         'yuho_data': {},
         'hanki_data': {},
+        'hanki_prior_data': {},
         'yuho_doc': classified.get('yuho'),
         'hanki_doc': classified.get('hanki'),
     }
 
+    cache_dir = get_cache_dir(code_4) if use_cache else None
     debug_info = {}
-    if 'yuho' in classified:
-        doc_id = classified['yuho'].get('docID', '')
-        if doc_id:
-            zip_bytes = download_csv_zip(session, api_key, doc_id)
-            time.sleep(1)
-            lines = parse_csv_lines(zip_bytes)
-            debug_info['yuho_zip_size'] = len(zip_bytes)
-            debug_info['yuho_csv_lines'] = len(lines)
-            result['yuho_data'] = extract_financial_data(zip_bytes)
 
-    if 'hanki' in classified:
-        doc_id = classified['hanki'].get('docID', '')
-        if doc_id:
+    for doc_type in ('yuho', 'hanki'):
+        if doc_type not in classified:
+            continue
+        doc = classified[doc_type]
+        doc_id = doc.get('docID', '')
+        if not doc_id:
+            continue
+
+        zip_filename = _doc_filename(doc, "zip")
+        pdf_filename = _doc_filename(doc, "pdf")
+
+        # --- CSV ZIP ---
+        zip_bytes = None
+        cache_hit = False
+
+        if cache_dir:
+            zip_path = cache_dir / zip_filename
+            if zip_path.exists():
+                zip_bytes = zip_path.read_bytes()
+                cache_hit = True
+
+        if zip_bytes is None:
             zip_bytes = download_csv_zip(session, api_key, doc_id)
             time.sleep(1)
-            lines = parse_csv_lines(zip_bytes)
-            debug_info['hanki_zip_size'] = len(zip_bytes)
-            debug_info['hanki_csv_lines'] = len(lines)
-            result['hanki_data'] = extract_financial_data(zip_bytes)
+            # キャッシュに保存
+            if cache_dir and zip_bytes:
+                (cache_dir / zip_filename).write_bytes(zip_bytes)
+
+        lines = parse_csv_lines(zip_bytes)
+        debug_info[f'{doc_type}_zip_size'] = len(zip_bytes)
+        debug_info[f'{doc_type}_csv_lines'] = len(lines)
+        debug_info[f'{doc_type}_cache_hit'] = cache_hit
+
+        # 半期報告書の場合: 前期H1データも抽出
+        if doc_type == 'hanki':
+            parsed = extract_financial_data(zip_bytes, include_prior=True)
+            result['hanki_data'] = parsed['current']
+            result['hanki_prior_data'] = parsed['prior']
+            debug_info['hanki_prior_keys'] = list(parsed['prior'].keys())
+        else:
+            result[f'{doc_type}_data'] = extract_financial_data(zip_bytes)
+
+        # --- PDF ---
+        if cache_dir:
+            pdf_path = cache_dir / pdf_filename
+            if not pdf_path.exists():
+                try:
+                    pdf_bytes = download_pdf(session, api_key, doc_id)
+                    time.sleep(1)
+                    if pdf_bytes:
+                        pdf_path.write_bytes(pdf_bytes)
+                except Exception:
+                    pass  # PDF取得失敗は非致命的
 
     result['_debug'] = debug_info
     return result
