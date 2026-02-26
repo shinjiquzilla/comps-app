@@ -625,7 +625,13 @@ if st.session_state.generation_done:
             components.html(f"""
 <style>
   body {{ margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size:14px; }}
-  table {{ width:100%; border-collapse:collapse; }}
+  .table-wrap {{ overflow-x:auto; width:100%; }}
+  .table-wrap::-webkit-scrollbar {{ height:10px; }}
+  .table-wrap::-webkit-scrollbar-track {{ background:#f0f0f0; border-radius:5px; }}
+  .table-wrap::-webkit-scrollbar-thumb {{ background:#aaa; border-radius:5px; }}
+  .table-wrap::-webkit-scrollbar-thumb:hover {{ background:#888; }}
+  .table-wrap {{ scrollbar-width:auto; scrollbar-color:#aaa #f0f0f0; }}
+  table {{ border-collapse:collapse; min-width:100%; }}
   th {{ padding:8px 12px; border-bottom:2px solid #ddd; cursor:pointer; user-select:none; background:#fafafa; position:sticky; top:0; vertical-align:bottom; line-height:1.4; }}
   th:hover {{ background:#f0f0f0; }}
   td {{ padding:6px 12px; border-bottom:1px solid #eee; white-space:nowrap; }}
@@ -634,10 +640,12 @@ if st.session_state.generation_done:
   .sort-arrow.active {{ color:#333; }}
   .sub {{ font-size:11px; color:#888; font-weight:normal; }}
 </style>
+<div class="table-wrap">
 <table id="comps-table">
   <thead><tr id="header-row"></tr></thead>
   <tbody id="table-body"></tbody>
 </table>
+</div>
 <script>
 const cols = {_cols_json};
 const rows = {_rows_json};
