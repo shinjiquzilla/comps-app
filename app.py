@@ -94,7 +94,7 @@ col1, col2 = st.columns([3, 1])
 with col1:
     codes_input = st.text_input(
         "証券コード（カンマ区切り）",
-        value="6763,6989,6768,6779",
+        value="",
         placeholder="例: 6763,6989,6768,6779",
     )
 
