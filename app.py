@@ -385,6 +385,14 @@ if st.session_state.generation_done:
                         ebitda = st.number_input("EBITDA（百万円）", value=int(company.get('ebitda_ltm') or 0),
                                                  key=f"ebitda_{idx}", step=1, format="%d")
 
+                    # 決算短信の抽出値があれば予想値・DPSにプリフィル
+                    tanshin = st.session_state.get('tanshin_forecasts', {}).get(company.get('code', ''), {})
+                    _rev_e_default = int(tanshin.get('rev_forecast') or company.get('rev_forecast') or 0)
+                    _op_e_default = int(tanshin.get('op_forecast') or company.get('op_forecast') or 0)
+                    _ni_e_default = int(tanshin.get('ni_forecast') or company.get('ni_forecast') or 0)
+                    _ebitda_e_default = int(company.get('ebitda_forecast') or 0)
+                    _dps_default = float(tanshin.get('dps') or company.get('dps') or 0)
+
                     with col3:
                         st.markdown("**BS（百万円）**")
                         cash = st.number_input("現金及び預金（百万円）", value=int(company.get('cash') or 0),
@@ -395,14 +403,6 @@ if st.session_state.generation_done:
                                              key=f"eq_{idx}", step=1, format="%d")
                         dps = st.number_input("DPS - 配当（円）", value=_dps_default,
                                               key=f"dps_{idx}", step=1.0, format="%.1f")
-
-                    # 決算短信の抽出値があれば予想値にプリフィル
-                    tanshin = st.session_state.get('tanshin_forecasts', {}).get(company.get('code', ''), {})
-                    _rev_e_default = int(tanshin.get('rev_forecast') or company.get('rev_forecast') or 0)
-                    _op_e_default = int(tanshin.get('op_forecast') or company.get('op_forecast') or 0)
-                    _ni_e_default = int(tanshin.get('ni_forecast') or company.get('ni_forecast') or 0)
-                    _ebitda_e_default = int(company.get('ebitda_forecast') or 0)
-                    _dps_default = float(tanshin.get('dps') or company.get('dps') or 0)
 
                     col4, col5 = st.columns(2)
                     with col4:
