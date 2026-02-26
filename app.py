@@ -206,163 +206,266 @@ if generate_btn:
         status_container = st.empty()
         progress_text = st.empty()
 
-        # ---- Step 0: 証券コード存在チェック ----
-        # ローカルにデータがある企業はyfinance検証をスキップ
+        # ---- 全社キャッシュ判定 ----
         from pathlib import Path
         from stock_fetcher import _load_stock_cache
         _tanshin_base = Path(__file__).parent / "data" / "tanshin"
         _edinet_base = Path(__file__).parent / "data" / "edinet"
+        _stock_base = Path(__file__).parent / "data" / "stock"
 
-        status_container.info("🔍 証券コードを検証中...")
-        invalid_codes = []
-        valid_codes = []
-        _need_yf_check = []
-        for vc in codes:
-            # ローカルキャッシュがあれば検証不要
-            _has_tanshin = (_tanshin_base / vc).is_dir() and any((_tanshin_base / vc).iterdir())
-            _has_edinet = (_edinet_base / vc / "meta.json").exists()
-            _has_stock = _load_stock_cache(vc) is not None
-            if _has_tanshin or _has_edinet or _has_stock:
-                valid_codes.append(vc)
-            else:
-                _need_yf_check.append(vc)
-
-        for vi, vc in enumerate(_need_yf_check):
-            progress_text.text(f"  🔍 {vc}: yfinanceで検証中... ({vi+1}/{len(_need_yf_check)})")
-            progress_bar.progress((vi + 1) / len(_need_yf_check) * 0.1 if _need_yf_check else 0.1)
-            is_valid, msg = validate_stock_code(vc)
-            if is_valid:
-                valid_codes.append(vc)
-            else:
-                invalid_codes.append((vc, msg))
-            # yfinanceレート制限回避
-            if vi < len(_need_yf_check) - 1:
-                time.sleep(2)
-
-        if not _need_yf_check:
-            progress_bar.progress(0.1)
-
-        if invalid_codes:
-            status_container.empty()
-            progress_bar.empty()
-            progress_text.empty()
-            for inv_code, inv_msg in invalid_codes:
-                st.error(f"❌ {inv_msg}")
-            st.warning("無効な証券コードを修正してから再度実行してください。")
-            st.stop()
-
-        # 元の入力順序を維持
-        _valid_set = set(valid_codes)
-        codes = [c for c in codes if c in _valid_set]
-        status_container.success(f"✅ {len(codes)}社の証券コードを確認しました。")
-
-        # ---- Step 1: EDINET一括検索（全社まとめて1回の日付ループ） ----
-        edinet_results = {}  # code_4 -> edinet_data
-        if edinet_available:
-            # キャッシュ状況を確認
-            cached_codes = []
-            uncached_codes = []
-            if use_cache:
-                for c in codes:
-                    meta = load_cached_meta(c)
-                    if meta and meta.get("docs") is not None:
-                        cached_codes.append(c)
-                    else:
-                        uncached_codes.append(c)
-            else:
-                uncached_codes = list(codes)
-
-            if cached_codes and not uncached_codes:
-                status_container.info(f"📄 EDINET: {len(cached_codes)}社すべてキャッシュから読み込み")
-            elif cached_codes:
-                status_container.info(f"📄 EDINET: {len(cached_codes)}社はキャッシュから読み込み、{len(uncached_codes)}社をAPI検索中...")
-            else:
-                status_container.info(f"📄 EDINET: {len(codes)}社分を一括検索中（{search_days}日間）...")
-
-            def edinet_progress(current, total):
-                progress_bar.progress(0.1 + current / total * 0.55)  # 10-65%をEDINETに割り当て
-                progress_text.text(f"  📄 EDINET検索: {current}/{total}日")
-
-            try:
-                edinet_results = fetch_companies_batch(
-                    codes, days=search_days, progress_callback=edinet_progress,
-                    use_cache=use_cache
-                )
-                if cached_codes and not uncached_codes:
-                    progress_bar.progress(0.65)
-            except Exception as e:
-                st.session_state.errors.append(f"EDINET一括検索エラー: {e}")
-        else:
-            st.session_state.errors.append("EDINET: API Key未設定（スキップ）")
-
-        # ---- Step 2: 各社ごとに株価・計算 ----
-        results = []
-        for i, code in enumerate(codes):
-            result = {
-                'code': code,
-                'status': 'processing',
-                'errors': [],
-                'data': None,
-                'edinet_raw': None,
-                'stock_raw': None,
+        # 各社のキャッシュ状況を事前確認
+        _cache_status = {}  # code -> {'edinet': bool, 'stock': bool, 'any': bool}
+        for _c in codes:
+            _has_edinet = (_edinet_base / _c / "meta.json").exists()
+            _has_edinet_parsed = (
+                (_edinet_base / _c / "yuho_parsed.json").exists() or
+                (_edinet_base / _c / "hanki_parsed.json").exists()
+            )
+            _has_stock = (_stock_base / _c / "stock.json").exists()
+            _has_tanshin = (_tanshin_base / _c).is_dir() and any((_tanshin_base / _c).glob("*.pdf"))
+            _cache_status[_c] = {
+                'edinet': _has_edinet and _has_edinet_parsed,
+                'stock': _has_stock,
+                'any': _has_edinet or _has_stock or _has_tanshin,
             }
 
-            # EDINET結果を取得
-            edinet_data = edinet_results.get(code, {
-                'company_name': '',
-                'yuho_data': {},
-                'hanki_data': {},
-                'yuho_doc': None,
-                'hanki_doc': None,
-            })
-            result['edinet_raw'] = edinet_data if edinet_data.get('yuho_data') or edinet_data.get('hanki_data') else None
+        _all_fully_cached = all(
+            cs['edinet'] and cs['stock'] for cs in _cache_status.values()
+        )
 
-            tdnet_data = {'forecast': {}}
+        # ---- 完全キャッシュパス: 外部API一切なし ----
+        if _all_fully_cached and use_cache:
+            progress_bar = st.progress(0)
+            status_container = st.empty()
+            progress_text = st.empty()
 
-            # 株価（同日中はキャッシュから取得）
-            from stock_fetcher import _load_stock_cache
-            base_progress = 0.65 + (i / len(codes)) * 0.30
-            progress_bar.progress(min(base_progress, 0.95))
-            _stock_cached = use_cache and _load_stock_cache(code) is not None
-            if _stock_cached:
-                status_container.info(f"📈 株価: {code} キャッシュから読み込み ({i+1}/{len(codes)})")
-                progress_text.text(f"  📈 {code}: キャッシュ読み込み...")
+            status_container.info(f"⚡ 全{len(codes)}社のデータをローカルキャッシュから読み込み中...")
+            progress_bar.progress(0.3)
+
+            # EDINETデータをパース済みJSONから直接読み込み
+            edinet_results = {}
+            for code in codes:
+                code_dir = _edinet_base / code
+                meta = load_cached_meta(code)
+                company_name = ""
+                yuho_doc = None
+                hanki_doc = None
+                if meta:
+                    for doc in meta.get("docs", []):
+                        if not company_name and doc.get("filerName"):
+                            company_name = doc["filerName"].replace("株式会社", "").strip()
+                        dt = doc.get("docTypeCode", "")
+                        if dt in ("120", "130") and not yuho_doc:
+                            yuho_doc = doc
+                        elif dt in ("160", "170") and not hanki_doc:
+                            hanki_doc = doc
+
+                yuho_data = {}
+                yuho_parsed_path = code_dir / "yuho_parsed.json"
+                if yuho_parsed_path.exists():
+                    try:
+                        yuho_data = _json.loads(yuho_parsed_path.read_text(encoding='utf-8'))
+                    except Exception:
+                        pass
+
+                hanki_data = {}
+                hanki_prior_data = {}
+                hanki_parsed_path = code_dir / "hanki_parsed.json"
+                if hanki_parsed_path.exists():
+                    try:
+                        hanki_parsed = _json.loads(hanki_parsed_path.read_text(encoding='utf-8'))
+                        hanki_data = hanki_parsed.get('current', {})
+                        hanki_prior_data = hanki_parsed.get('prior', {})
+                    except Exception:
+                        pass
+
+                edinet_results[code] = {
+                    'company_name': company_name,
+                    'yuho_data': yuho_data,
+                    'hanki_data': hanki_data,
+                    'hanki_prior_data': hanki_prior_data,
+                    'yuho_doc': yuho_doc,
+                    'hanki_doc': hanki_doc,
+                    '_debug': {'fully_cached': True},
+                }
+
+            progress_bar.progress(0.6)
+
+            # 株価データをJSONから直接読み込み＆計算
+            results = []
+            for i, code in enumerate(codes):
+                edinet_data = edinet_results.get(code, {
+                    'company_name': '', 'yuho_data': {}, 'hanki_data': {},
+                    'yuho_doc': None, 'hanki_doc': None,
+                })
+                stock_data = _load_stock_cache(code) or {
+                    'stock_price': None, 'shares_outstanding': None,
+                    'market_cap': None, 'company_name_en': '',
+                }
+                tdnet_data = {'forecast': {}}
+
+                result = {
+                    'code': code, 'status': 'processing', 'errors': [],
+                    'data': None, 'edinet_raw': None, 'stock_raw': stock_data,
+                }
+                result['edinet_raw'] = edinet_data if edinet_data.get('yuho_data') or edinet_data.get('hanki_data') else None
+
+                try:
+                    company = build_company_data(code, edinet_data, tdnet_data, stock_data)
+                    if not company.get('name') and stock_data.get('company_name_en'):
+                        company['name'] = stock_data['company_name_en']
+                    result['data'] = company
+                    result['status'] = 'done'
+                except Exception as e:
+                    result['errors'].append(f"計算: {e}")
+                    result['status'] = 'error'
+
+                if result['errors']:
+                    for err in result['errors']:
+                        st.session_state.errors.append(f"{code}: {err}")
+                results.append(result)
+
+            progress_bar.progress(1.0)
+            status_container.success(f"✅ 完了: 全{len(codes)}社をキャッシュから即座に読み込みました（外部API通信なし）。")
+            progress_text.empty()
+
+        else:
+            # ---- 通常パス: キャッシュミスあり → 外部API使用 ----
+            progress_bar = st.progress(0)
+            status_container = st.empty()
+            progress_text = st.empty()
+
+            # Step 0: 証券コード存在チェック
+            status_container.info("🔍 証券コードを検証中...")
+            invalid_codes = []
+            valid_codes = []
+            _need_yf_check = []
+            for vc in codes:
+                if _cache_status[vc]['any']:
+                    valid_codes.append(vc)
+                else:
+                    _need_yf_check.append(vc)
+
+            for vi, vc in enumerate(_need_yf_check):
+                progress_text.text(f"  🔍 {vc}: yfinanceで検証中... ({vi+1}/{len(_need_yf_check)})")
+                progress_bar.progress((vi + 1) / len(_need_yf_check) * 0.1 if _need_yf_check else 0.1)
+                is_valid, msg = validate_stock_code(vc)
+                if is_valid:
+                    valid_codes.append(vc)
+                else:
+                    invalid_codes.append((vc, msg))
+                if vi < len(_need_yf_check) - 1:
+                    time.sleep(2)
+
+            if not _need_yf_check:
+                progress_bar.progress(0.1)
+
+            if invalid_codes:
+                status_container.empty()
+                progress_bar.empty()
+                progress_text.empty()
+                for inv_code, inv_msg in invalid_codes:
+                    st.error(f"❌ {inv_msg}")
+                st.warning("無効な証券コードを修正してから再度実行してください。")
+                st.stop()
+
+            _valid_set = set(valid_codes)
+            codes = [c for c in codes if c in _valid_set]
+            status_container.success(f"✅ {len(codes)}社の証券コードを確認しました。")
+
+            # Step 1: EDINET一括検索
+            edinet_results = {}
+            if edinet_available:
+                cached_codes = []
+                uncached_codes = []
+                if use_cache:
+                    for c in codes:
+                        meta = load_cached_meta(c)
+                        if meta and meta.get("docs") is not None:
+                            cached_codes.append(c)
+                        else:
+                            uncached_codes.append(c)
+                else:
+                    uncached_codes = list(codes)
+
+                if cached_codes and not uncached_codes:
+                    status_container.info(f"📄 EDINET: {len(cached_codes)}社すべてキャッシュから読み込み")
+                elif cached_codes:
+                    status_container.info(f"📄 EDINET: {len(cached_codes)}社はキャッシュから読み込み、{len(uncached_codes)}社をAPI検索中...")
+                else:
+                    status_container.info(f"📄 EDINET: {len(codes)}社分を一括検索中（{search_days}日間）...")
+
+                def edinet_progress(current, total):
+                    progress_bar.progress(0.1 + current / total * 0.55)
+                    progress_text.text(f"  📄 EDINET検索: {current}/{total}日")
+
+                try:
+                    edinet_results = fetch_companies_batch(
+                        codes, days=search_days, progress_callback=edinet_progress,
+                        use_cache=use_cache
+                    )
+                    if cached_codes and not uncached_codes:
+                        progress_bar.progress(0.65)
+                except Exception as e:
+                    st.session_state.errors.append(f"EDINET一括検索エラー: {e}")
             else:
-                status_container.info(f"📈 株価: {code} ({i+1}/{len(codes)})")
-                progress_text.text(f"  📈 {code}: yfinanceから取得中...")
-            stock_data = {'stock_price': None, 'shares_outstanding': None, 'market_cap': None}
-            try:
-                stock_data = fetch_stock_info(code, use_cache=use_cache)
-                result['stock_raw'] = stock_data
-            except Exception as e:
-                result['errors'].append(f"株価: {e}")
+                st.session_state.errors.append("EDINET: API Key未設定（スキップ）")
 
-            # 計算
-            progress_text.text(f"  🔢 {code}: 計算中...")
-            try:
-                company = build_company_data(code, edinet_data, tdnet_data, stock_data)
-                if not company.get('name') and stock_data.get('company_name_en'):
-                    company['name'] = stock_data['company_name_en']
-                result['data'] = company
-                result['status'] = 'done'
-            except Exception as e:
-                result['errors'].append(f"計算: {e}")
-                result['status'] = 'error'
+            # Step 2: 各社ごとに株価・計算
+            results = []
+            for i, code in enumerate(codes):
+                result = {
+                    'code': code, 'status': 'processing', 'errors': [],
+                    'data': None, 'edinet_raw': None, 'stock_raw': None,
+                }
 
-            if result['errors']:
-                for err in result['errors']:
-                    st.session_state.errors.append(f"{code}: {err}")
+                edinet_data = edinet_results.get(code, {
+                    'company_name': '', 'yuho_data': {}, 'hanki_data': {},
+                    'yuho_doc': None, 'hanki_doc': None,
+                })
+                result['edinet_raw'] = edinet_data if edinet_data.get('yuho_data') or edinet_data.get('hanki_data') else None
 
-            results.append(result)
+                tdnet_data = {'forecast': {}}
 
-            # yfinance レート制限回避: キャッシュミス時のみ待機
-            if not _stock_cached and i < len(codes) - 1:
-                progress_text.text("  ⏳ レート制限回避のため待機中...")
-                time.sleep(3)
+                base_progress = 0.65 + (i / len(codes)) * 0.30
+                progress_bar.progress(min(base_progress, 0.95))
+                _stock_cached = use_cache and _load_stock_cache(code) is not None
+                if _stock_cached:
+                    status_container.info(f"📈 株価: {code} キャッシュから読み込み ({i+1}/{len(codes)})")
+                    progress_text.text(f"  📈 {code}: キャッシュ読み込み...")
+                else:
+                    status_container.info(f"📈 株価: {code} ({i+1}/{len(codes)})")
+                    progress_text.text(f"  📈 {code}: yfinanceから取得中...")
+                stock_data = {'stock_price': None, 'shares_outstanding': None, 'market_cap': None}
+                try:
+                    stock_data = fetch_stock_info(code, use_cache=use_cache)
+                    result['stock_raw'] = stock_data
+                except Exception as e:
+                    result['errors'].append(f"株価: {e}")
 
-        progress_bar.progress(1.0)
-        status_container.success(f"✅ 完了: {len(codes)}社の処理が終わりました。")
-        progress_text.empty()
+                progress_text.text(f"  🔢 {code}: 計算中...")
+                try:
+                    company = build_company_data(code, edinet_data, tdnet_data, stock_data)
+                    if not company.get('name') and stock_data.get('company_name_en'):
+                        company['name'] = stock_data['company_name_en']
+                    result['data'] = company
+                    result['status'] = 'done'
+                except Exception as e:
+                    result['errors'].append(f"計算: {e}")
+                    result['status'] = 'error'
+
+                if result['errors']:
+                    for err in result['errors']:
+                        st.session_state.errors.append(f"{code}: {err}")
+                results.append(result)
+
+                if not _stock_cached and i < len(codes) - 1:
+                    progress_text.text("  ⏳ レート制限回避のため待機中...")
+                    time.sleep(3)
+
+            progress_bar.progress(1.0)
+            status_container.success(f"✅ 完了: {len(codes)}社の処理が終わりました。")
+            progress_text.empty()
 
         st.session_state.company_data = results
         st.session_state.generation_done = True
