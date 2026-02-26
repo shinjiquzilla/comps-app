@@ -5,7 +5,6 @@ Comps自動生成 Streamlit アプリ
 
 データソース:
 - EDINET API type=5 CSV: 有報・半期報告書の財務データ
-- TDnet スクレイピング + PyMuPDF: 決算短信の業績予想
 - yfinance: 最新株価・時価総額
 
 使い方:
@@ -30,7 +29,6 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from edinet_client import fetch_company_financials, fetch_companies_batch, load_api_key
-from tdnet_client import fetch_tanshin_forecasts
 from stock_fetcher import fetch_stock_info
 from financial_calc import build_company_data
 from comps_generator import generate_comps
@@ -73,18 +71,14 @@ with st.sidebar:
         if api_key_input:
             os.environ["EDINET_API_KEY"] = api_key_input
 
-    search_days = st.slider("検索期間（日数）", 30, 730, 90, step=30,
-                            help="EDINET/TDnetを過去何日分検索するか")
-
-    enable_tdnet = st.checkbox("TDnet検索を有効化", value=False,
-                               help="決算短信の業績予想を取得（1社あたり数分追加）")
+    search_days = st.slider("検索期間（日数）", 30, 730, 400, step=30,
+                            help="EDINETを過去何日分検索するか（有報は決算後3ヶ月、半期報も同様に提出されるため、400日程度が推奨）")
 
     st.divider()
 
     st.markdown("""
     **データソース:**
     - 📄 EDINET API (有報・半期報)
-    - 📰 TDnet (決算短信・業績予想) ※オプション
     - 📈 yfinance (株価)
     """)
 
@@ -163,7 +157,7 @@ if generate_btn:
         else:
             st.session_state.errors.append("EDINET: API Key未設定（スキップ）")
 
-        # ---- Step 2: 各社ごとにTDnet（オプション）・株価・計算 ----
+        # ---- Step 2: 各社ごとに株価・計算 ----
         results = []
         for i, code in enumerate(codes):
             result = {
@@ -172,7 +166,6 @@ if generate_btn:
                 'errors': [],
                 'data': None,
                 'edinet_raw': None,
-                'tdnet_raw': None,
                 'stock_raw': None,
             }
 
@@ -186,17 +179,7 @@ if generate_btn:
             })
             result['edinet_raw'] = edinet_data if edinet_data.get('yuho_data') or edinet_data.get('hanki_data') else None
 
-            # TDnet（オプション）
             tdnet_data = {'forecast': {}}
-            if enable_tdnet:
-                status_container.info(f"📰 TDnet: {code} ({i+1}/{len(codes)})")
-                progress_text.text(f"  📰 {code}: TDnet決算短信検索中...")
-                try:
-                    tdnet_data = fetch_tanshin_forecasts(code, days=search_days)
-                    tdnet_summary = {k: v for k, v in tdnet_data.items() if k != 'text'}
-                    result['tdnet_raw'] = tdnet_summary
-                except Exception as e:
-                    result['errors'].append(f"TDnet: {e}")
 
             # 株価
             base_progress = 0.6 + (i / len(codes)) * 0.35
@@ -271,15 +254,6 @@ if st.session_state.generation_done:
                     })
                 else:
                     st.text("EDINET: データなし")
-                if r.get('tdnet_raw'):
-                    td = r['tdnet_raw']
-                    st.json({
-                        'forecast': td.get('forecast', {}),
-                        'tanshin_count': len(td.get('tanshin_items', [])),
-                        'target': td.get('target_tanshin', {}).get('title') if td.get('target_tanshin') else None,
-                    })
-                else:
-                    st.text("TDnet: データなし")
                 if r.get('stock_raw'):
                     st.json(r['stock_raw'])
                 else:
@@ -430,7 +404,7 @@ if st.session_state.generation_done:
                 date_str = st.text_input("日付", value=datetime.today().strftime("%Y/%m/%d"))
 
             notes = st.text_area("ノート（1行1項目）",
-                                 value="Source: EDINET, TDnet, Yahoo Finance\n"
+                                 value="Source: EDINET, Yahoo Finance\n"
                                        "Unit: JPY millions\n"
                                        "LTM = Last Twelve Months")
 
