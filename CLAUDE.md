@@ -49,8 +49,8 @@ streamlit run app.py
 ### 決算短信パーサー
 `tanshin_parser.py` — PyMuPDF（`fitz`）で決算短信PDFからテキスト抽出し、正規表現で業績予想（売上高・営業利益・純利益・DPS）をパース。パース失敗時は空dictを返し手動入力にフォールバック。アップロードPDFは `data/tanshin/{code_4}/` にローカル保存。ファイル名はEDINET命名規則に準拠（`tanshin_{YYYY-MM}_{FY|Q1|Q2|Q3}.pdf`）。
 
-### 決算短信一括アップロード＆自動判定
-`identify_tanshin_pdf(pdf_bytes, candidate_codes)` — PDF1ページ目から証券コード・決算期・期間種別（FY/Q1/Q2/Q3）を正規表現で自動判定。一括アップロードUI（`accept_multiple_files=True`）で複数PDFを同時処理し、ステータス列付きテーブルで判定結果を表示。必要な期間をmultiselectで指定し、不足書類・対象外ファイルを自動検出して警告表示。
+### 決算短信一括アップロード＆不足自動検出
+`identify_tanshin_pdf(pdf_bytes, candidate_codes)` — PDF1ページ目から証券コード・決算期・期間種別（FY/Q1/Q2/Q3）を正規表現で自動判定。一括アップロードUI（`accept_multiple_files=True`）で複数PDFを同時処理。保存済みPDFは `data/tanshin/{code_4}/` にgit管理され、自動パースで予想値をプリフィル。不足データ（PER用の純利益予想、配当利回り用のDPS等）を自動検出し、「○○年○月期 第○四半期決算短信をアップロードしてください」と具体的にリクエスト表示。
 
 ### 証券コード検証
 `validate_stock_code(code_4)` — yfinance `history(period="5d")` で東証に存在するか軽量チェック。`data/tanshin/{code_4}/` にPDF格納済みの企業はyfinance不要（ローカルで検証済み扱い）。フォーマット検証（4桁数字）は入力欄の下にリアルタイム表示。
@@ -100,7 +100,9 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
-| 2026/2/26 | — | 決算短信一括アップロード＆自動判定、過不足チェック、証券コード検証 |
+| 2026/2/26 | — | 不足データ自動検出（PER/配当利回り→具体的な決算短信をリクエスト）、保存済みPDF自動パース |
+| 2026/2/26 | 5f79763 | 決算短信PDFをgit永続化、保存済みPDFで過不足チェック |
+| 2026/2/26 | 1f3dfa9 | 決算短信一括アップロード＆自動判定、証券コード検証 |
 | 2026/2/26 | 6813b01 | Calendarize: 正確なLTM計算（前期H1自動抽出）+ 決算短信PDFアップロード＆パース |
 | 2026/2/26 | 522831e | TDnet機能を完全無効化（有料サービスでログイン必要）、検索期間400日に戻す |
 | 2026/2/26 | 0392c01 | EDINET一括検索で高速化（N社×日数→1×日数） |

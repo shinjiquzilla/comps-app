@@ -373,74 +373,111 @@ if st.session_state.generation_done:
             df_summary = pd.DataFrame(summary_rows)
             st.dataframe(df_summary, use_container_width=True, hide_index=True)
 
-            # --- 決算短信一括アップロードセクション ---
-            st.subheader("📄 決算短信アップロード（任意）")
-            st.caption("決算短信PDFをまとめてアップロードすると、PDF内容から会社・期間を自動判定し、業績予想値をプリフィルします。")
-
+            # --- 決算短信セクション ---
             if 'tanshin_forecasts' not in st.session_state:
                 st.session_state.tanshin_forecasts = {}
 
             candidate_codes = [c.get('code', '') for c in companies_for_config if c.get('code')]
-            # code→企業名のマップ
             code_name_map = {c.get('code', ''): c.get('name', '') for c in companies_for_config}
 
-            # --- 必要な決算短信の指定 ---
-            st.markdown("**必要な決算短信（全社共通）**")
-            _cur_year = datetime.today().year
-            _period_options = []
-            for _y in range(_cur_year - 1, _cur_year + 2):
-                _fy = f"{_y}-03"
-                for _pt in ["通期", "Q1", "Q2", "Q3"]:
-                    _period_options.append(f"{_fy} {_pt}")
-
-            required_periods_raw = st.multiselect(
-                "各社に必要な期間を選択してください",
-                options=_period_options,
-                default=[f"{_cur_year}-03 通期", f"{_cur_year + 1}-03 Q2"],
-                key="required_periods",
-                help="選択した期間 × 全企業 の決算短信が必要と判定します。3月期以外の企業がある場合は手動で調整してください。",
-            )
-
-            # "2025-03 通期" → ("2025-03", "FY") にパース
-            required_periods = []
-            for rp in required_periods_raw:
-                parts = rp.split(' ', 1)
-                ptype = 'FY' if parts[1] == '通期' else parts[1]
-                required_periods.append((parts[0], ptype))
-
-            # 期待される全ドキュメント: 企業 × 期間
-            expected_set = set()
-            for code in candidate_codes:
-                for fy_end, ptype in required_periods:
-                    expected_set.add((code, fy_end, ptype))
-
-            # --- 保存済みPDFのスキャン ---
-            # data/tanshin/{code}/ に既にあるPDFは「取得済み」として扱う
+            # --- 保存済みPDFの自動パース ---
             from pathlib import Path
             _tanshin_base = Path(__file__).parent / "data" / "tanshin"
-            _existing_set = set()  # (code, fy_end, period_type)
-            _existing_files = []   # 表示用
+            _existing_files = []
             for code in candidate_codes:
                 code_dir = _tanshin_base / code
                 if not code_dir.is_dir():
                     continue
-                for pdf_path in code_dir.glob("tanshin_*.pdf"):
-                    # tanshin_2026-03_FY.pdf → fy_end=2026-03, period_type=FY
-                    parts = pdf_path.stem.split('_')  # ['tanshin', '2026-03', 'FY']
+                for pdf_path in sorted(code_dir.glob("tanshin_*.pdf"), reverse=True):
+                    parts = pdf_path.stem.split('_')
                     if len(parts) >= 3:
-                        fy_end = parts[1]
-                        ptype = parts[2]
-                        _existing_set.add((code, fy_end, ptype))
+                        _ptype_ja = {'FY': '通期', 'Q1': 'Q1', 'Q2': 'Q2', 'Q3': 'Q3'}
                         _existing_files.append({
                             '企業': f"{code} {code_name_map.get(code, '')}",
-                            '期間': fy_end.replace('-', '/') + ' ' + {'FY': '通期', 'Q1': 'Q1', 'Q2': 'Q2', 'Q3': 'Q3'}.get(ptype, ptype),
+                            '期間': parts[1].replace('-', '/') + ' ' + _ptype_ja.get(parts[2], parts[2]),
                             'ファイル': pdf_path.name,
                         })
+                # 保存済みPDFから予想値を自動パース（session stateに未登録の場合）
+                if code not in st.session_state.tanshin_forecasts:
+                    for pdf_path in sorted(code_dir.glob("tanshin_*.pdf"), reverse=True):
+                        parsed = parse_tanshin_pdf(pdf_path.read_bytes())
+                        if parsed:
+                            st.session_state.tanshin_forecasts[code] = parsed
+                            break
 
-            if required_periods:
-                _already_have = expected_set & _existing_set
-                _still_need = expected_set - _existing_set
-                st.caption(f"必要書類: {len(candidate_codes)}社 × {len(required_periods)}期間 = **{len(expected_set)}件**（保存済み: {len(_already_have)}件 / 未取得: {len(_still_need)}件）")
+            # --- 不足データの自動検出 ---
+            _missing_items = []
+            for comp in companies_for_config:
+                code = comp.get('code', '')
+                if not code:
+                    continue
+                tanshin = st.session_state.get('tanshin_forecasts', {}).get(code, {})
+                ni_forecast = tanshin.get('ni_forecast') or comp.get('ni_forecast')
+                dps_val = tanshin.get('dps') or comp.get('dps')
+
+                missing_reasons = []
+                if not ni_forecast:
+                    missing_reasons.append("PER（通期予想当期純利益が必要）")
+                if not dps_val:
+                    missing_reasons.append("配当利回り（配当予想が必要）")
+
+                if missing_reasons:
+                    # 決算期を特定: EDINETの半期報periodEndから推定
+                    _fy_label = ""
+                    for r in st.session_state.company_data:
+                        if r.get('code') == code and r.get('edinet_raw'):
+                            hd = r['edinet_raw'].get('hanki_doc')
+                            if hd and hd.get('periodEnd'):
+                                pe = hd['periodEnd']  # "2026/03/31" or "2026-03-31"
+                                pe_clean = pe.replace('/', '-')
+                                parts = pe_clean.split('-')
+                                if len(parts) >= 2:
+                                    _fy_label = f"{parts[0]}年{int(parts[1])}月期"
+                            break
+
+                    # 最新の四半期を推定（決算月と現在日付から）
+                    _quarter_hint = ""
+                    if _fy_label:
+                        today = datetime.today()
+                        # 3月期の場合: Q1=4-6月, Q2=7-9月, Q3=10-12月, FY=1-3月
+                        # 決算短信は四半期末の約45日後に公開
+                        month = today.month
+                        if month in (1, 2, 3):
+                            _quarter_hint = "第3四半期"
+                        elif month in (4, 5):
+                            _quarter_hint = "通期"
+                        elif month in (6, 7, 8):
+                            _quarter_hint = "第1四半期"
+                        elif month in (9, 10, 11):
+                            _quarter_hint = "第2四半期"
+                        else:
+                            _quarter_hint = "第3四半期"
+
+                    suggestion = _fy_label
+                    if _quarter_hint:
+                        suggestion += f" {_quarter_hint}決算短信"
+                    if not suggestion:
+                        suggestion = "最新の決算短信"
+
+                    _missing_items.append({
+                        'code': code,
+                        'name': code_name_map.get(code, ''),
+                        'reasons': missing_reasons,
+                        'suggestion': suggestion,
+                    })
+
+            # --- 表示 ---
+            if _missing_items:
+                st.subheader("📄 決算短信アップロード")
+                for mi in _missing_items:
+                    reasons_str = '、'.join(mi['reasons'])
+                    st.warning(
+                        f"**{mi['code']} {mi['name']}**: {reasons_str}が計算できません。\n\n"
+                        f"通期の業績予想が掲載されている **{mi['suggestion']}** をアップロードしてください。"
+                    )
+            else:
+                st.subheader("📄 決算短信")
+                st.success("✅ 全社の業績予想・配当データが揃っています。追加アップロードは不要です。")
 
             if _existing_files:
                 with st.expander(f"📁 保存済み決算短信（{len(_existing_files)}件）", expanded=False):
@@ -448,18 +485,17 @@ if st.session_state.generation_done:
 
             # --- ファイルアップロード ---
             uploaded_files = st.file_uploader(
-                "PDFファイルをまとめてアップロード（保存済み以外のものをアップロード）",
+                "決算短信PDFをまとめてアップロード",
                 type=['pdf'],
                 accept_multiple_files=True,
                 key="tanshin_bulk",
             )
 
             if uploaded_files:
-                # 判定結果テーブル
                 id_results = []
                 for uf in uploaded_files:
                     pdf_bytes = uf.read()
-                    uf.seek(0)  # reset for potential re-read
+                    uf.seek(0)
                     identification = identify_tanshin_pdf(pdf_bytes, candidate_codes)
                     id_results.append({
                         'file': uf,
@@ -467,14 +503,7 @@ if st.session_state.generation_done:
                         'identification': identification,
                     })
 
-                # アップロード済みセット（既存ローカルファイル + 今回アップロード分）
-                uploaded_set = set(_existing_set)
-                for ir in id_results:
-                    ident = ir['identification']
-                    if ident['code_4'] and ident['fy_end']:
-                        uploaded_set.add((ident['code_4'], ident['fy_end'], ident['period_type']))
-
-                # 判定結果をテーブル表示（ステータス列付き）
+                # 判定結果テーブル
                 _period_type_ja = {'FY': '通期', 'Q1': 'Q1', 'Q2': 'Q2', 'Q3': 'Q3'}
                 table_rows = []
                 for ir in id_results:
@@ -483,15 +512,12 @@ if st.session_state.generation_done:
                     if code and ident['fy_end']:
                         company_display = f"{code} {code_name_map.get(code, ident['company_name'])}"
                         fy = ident['fy_end'].replace('-', '/')
-                        period_display = f"{_period_type_ja.get(ident['period_type'], ident['period_type'])} {fy}"
+                        period_display = _period_type_ja.get(ident['period_type'], ident['period_type']) + ' ' + fy
                         filename = ident['suggested_filename'] or '—'
-                        key = (code, ident['fy_end'], ident['period_type'])
-                        if key in expected_set:
-                            status = "✅ OK"
-                        elif code not in candidate_codes:
+                        if code not in candidate_codes:
                             status = "⚠️ 対象外の企業"
                         else:
-                            status = "⚠️ 対象外の期間"
+                            status = "✅ OK"
                     elif code:
                         company_display = f"{code} {code_name_map.get(code, ident['company_name'])}"
                         period_display = "—（期間判定失敗）"
@@ -509,93 +535,30 @@ if st.session_state.generation_done:
                         '保存ファイル名': filename,
                         'ステータス': status,
                     })
-
                 st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
 
-                # --- 過不足チェック ---
-                if required_periods:
-                    missing = expected_set - uploaded_set
-
-                    # 対象外のアップロード（企業が対象外 or 期間が対象外）
-                    unexpected = []
-                    for ir in id_results:
-                        ident = ir['identification']
-                        code = ident['code_4']
-                        if code is None:
-                            unexpected.append({
-                                'ファイル': ir['file'].name,
-                                '理由': '企業・期間を判定できませんでした',
-                            })
-                        elif code and ident['fy_end']:
-                            key = (code, ident['fy_end'], ident['period_type'])
-                            if key not in expected_set:
-                                fy = ident['fy_end'].replace('-', '/')
-                                pt_ja = _period_type_ja.get(ident['period_type'], ident['period_type'])
-                                if code not in candidate_codes:
-                                    reason = f"対象外の企業です（{code}）"
-                                else:
-                                    reason = f"必要な期間に含まれていません（{fy} {pt_ja}）"
-                                unexpected.append({
-                                    'ファイル': ir['file'].name,
-                                    '理由': reason,
-                                })
-
-                    if not missing and not unexpected:
-                        st.success(f"✅ 全{len(expected_set)}件の決算短信が揃っています。")
-                    else:
-                        if missing:
-                            st.error(f"❌ 不足: {len(missing)}件の決算短信がアップロードされていません。")
-                            missing_rows = []
-                            for code, fy_end, ptype in sorted(missing):
-                                fy = fy_end.replace('-', '/')
-                                pt_ja = _period_type_ja.get(ptype, ptype)
-                                missing_rows.append({
-                                    '企業': f"{code} {code_name_map.get(code, '')}",
-                                    '必要な期間': f"{fy} {pt_ja}",
-                                    'ファイル名（期待）': f"tanshin_{fy_end}_{ptype}.pdf",
-                                })
-                            st.dataframe(pd.DataFrame(missing_rows), use_container_width=True, hide_index=True)
-
-                        if unexpected:
-                            st.warning(f"⚠️ 対象外: {len(unexpected)}件のファイルは必要な書類に該当しません。")
-                            st.dataframe(pd.DataFrame(unexpected), use_container_width=True, hide_index=True)
-
-                        matched = len(uploaded_set & expected_set)
-                        st.info(f"📊 進捗: {matched}/{len(expected_set)}件 完了")
+                # 判定失敗の警告
+                _fail_files = [ir['file'].name for ir in id_results if not ir['identification']['code_4']]
+                if _fail_files:
+                    st.warning(f"⚠️ {len(_fail_files)}件は企業を判定できませんでした: {', '.join(_fail_files)}")
 
                 # 判定成功分を自動パース＆保存
+                _parsed_count = 0
                 for ir in id_results:
                     ident = ir['identification']
                     code = ident['code_4']
-                    if code:
+                    if code and code in candidate_codes:
                         parsed = parse_tanshin_pdf(ir['pdf_bytes'])
                         if parsed:
                             st.session_state.tanshin_forecasts[code] = parsed
-                        # EDINET命名規則に準拠したファイル名で保存
+                            _parsed_count += 1
                         save_name = ident['suggested_filename'] or ir['file'].name
                         try:
                             save_tanshin_pdf(ir['pdf_bytes'], code, save_name)
                         except Exception:
-                            pass  # 保存失敗は非致命的
-
-            # --- 保存済みのみで過不足チェック（アップロードなしの場合） ---
-            if not uploaded_files and required_periods:
-                _period_type_ja = {'FY': '通期', 'Q1': 'Q1', 'Q2': 'Q2', 'Q3': 'Q3'}
-                missing = expected_set - _existing_set
-                if not missing:
-                    st.success(f"✅ 全{len(expected_set)}件の決算短信が揃っています。追加アップロードは不要です。")
-                else:
-                    st.warning(f"❌ 不足: {len(missing)}件の決算短信がまだ保存されていません。上のアップローダーからアップロードしてください。")
-                    missing_rows = []
-                    for code, fy_end, ptype in sorted(missing):
-                        fy = fy_end.replace('-', '/')
-                        pt_ja = _period_type_ja.get(ptype, ptype)
-                        missing_rows.append({
-                            '企業': f"{code} {code_name_map.get(code, '')}",
-                            '必要な期間': f"{fy} {pt_ja}",
-                            'ファイル名（期待）': f"tanshin_{fy_end}_{ptype}.pdf",
-                        })
-                    st.dataframe(pd.DataFrame(missing_rows), use_container_width=True, hide_index=True)
+                            pass
+                if _parsed_count:
+                    st.success(f"✅ {_parsed_count}件の業績予想を抽出しました。下の予想値フィールドに反映されています。")
 
             # --- 手動補完セクション ---
             st.subheader("手動データ補完")
