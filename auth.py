@@ -6,7 +6,12 @@ Supabase の Project URL と anon key は Streamlit secrets で管理。
 """
 
 import streamlit as st
-from gotrue import SyncGoTrueClient, AuthResponse
+
+try:
+    from gotrue import SyncGoTrueClient, AuthResponse
+except ImportError:
+    SyncGoTrueClient = None
+    AuthResponse = None
 
 
 def _get_auth_client() -> SyncGoTrueClient:
