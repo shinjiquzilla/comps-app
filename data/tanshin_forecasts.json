@@ -1,1 +1,22 @@
-{}
+{
+  "6999": {
+    "rev_forecast": 71400,
+    "op_forecast": 3710,
+    "ni_forecast": 3410
+  },
+  "6616": {
+    "rev_forecast": 25000,
+    "op_forecast": 800,
+    "ni_forecast": 550
+  },
+  "6963": {
+    "rev_forecast": 480000,
+    "op_forecast": 6000,
+    "ni_forecast": 10000
+  },
+  "6962": {
+    "rev_forecast": 40000,
+    "op_forecast": 1000,
+    "ni_forecast": 300
+  }
+}
