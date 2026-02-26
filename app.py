@@ -467,6 +467,7 @@ if st.session_state.generation_done:
 
                 # 判定成功分を自動パース＆保存（session stateを即時更新）
                 _parsed_count = 0
+                _parse_failures = []
                 for ir in id_results:
                     ident = ir['identification']
                     code = ident['code_4']
@@ -475,6 +476,8 @@ if st.session_state.generation_done:
                         if parsed:
                             st.session_state.tanshin_forecasts[code] = parsed
                             _parsed_count += 1
+                        else:
+                            _parse_failures.append((code, code_name_map.get(code, ''), ir['file'].name))
                         save_name = ident['suggested_filename'] or ir['file'].name
                         try:
                             save_tanshin_pdf(ir['pdf_bytes'], code, save_name)
@@ -482,6 +485,23 @@ if st.session_state.generation_done:
                             pass
                 if _parsed_count:
                     st.success(f"✅ {_parsed_count}件の業績予想を抽出しました。")
+                for _pf_code, _pf_name, _pf_file in _parse_failures:
+                    st.error(
+                        f"❌ **{_pf_code} {_pf_name}**（{_pf_file}）: PDFは判定できましたが、"
+                        f"業績予想の抽出に失敗しました。手動入力で補完してください。"
+                    )
+                    # デバッグ: PDFテキストの冒頭を表示
+                    try:
+                        import fitz
+                        doc = fitz.open(stream=ir['pdf_bytes'], filetype="pdf")
+                        _debug_text = ""
+                        for _pg in range(min(3, len(doc))):
+                            _debug_text += doc[_pg].get_text() + "\n"
+                        doc.close()
+                        with st.expander(f"🔍 デバッグ: {_pf_file} のテキスト（先頭2000文字）"):
+                            st.text(_debug_text[:2000])
+                    except Exception:
+                        pass
 
             # --- Step 3: 不足データの自動検出（アップロード処理の後に実行） ---
             _missing_items = []
