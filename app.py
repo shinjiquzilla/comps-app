@@ -233,20 +233,6 @@ if generate_btn:
             cs['edinet'] and cs['stock'] for cs in _cache_status.values()
         )
 
-        # デバッグ: キャッシュ判定結果を表示
-        with st.expander(f"🔧 キャッシュ判定デバッグ（_all_fully_cached={_all_fully_cached}, use_cache={use_cache}）", expanded=True):
-            for _dc, _ds in _cache_status.items():
-                st.text(f"  {_dc}: edinet={_ds['edinet']}, stock={_ds['stock']}, any={_ds['any']}")
-            st.text(f"  _edinet_base = {_edinet_base}")
-            st.text(f"  _stock_base = {_stock_base}")
-            # 実際のファイル存在チェック
-            for _dc in codes:
-                _meta_path = _edinet_base / _dc / "meta.json"
-                _yuho_path = _edinet_base / _dc / "yuho_parsed.json"
-                _hanki_path = _edinet_base / _dc / "hanki_parsed.json"
-                _stock_path = _stock_base / _dc / "stock.json"
-                st.text(f"  {_dc}: meta={_meta_path.exists()}, yuho_parsed={_yuho_path.exists()}, hanki_parsed={_hanki_path.exists()}, stock={_stock_path.exists()}")
-
         # ---- 完全キャッシュパス: 外部API一切なし ----
         if _all_fully_cached and use_cache:
             progress_bar = st.progress(0)
