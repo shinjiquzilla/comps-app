@@ -596,8 +596,8 @@ if st.session_state.generation_done:
                 '営業利益LTM（百万円）': '営業利益LTM<br><span class="sub">（百万円）</span>',
                 'EBITDA LTM（百万円）': 'EBITDA LTM<br><span class="sub">（百万円）</span>',
                 'EV/EBITDA LTM': 'EV/EBITDA<br><span class="sub">LTM</span>',
-                'Forward PER': 'Forward PER',
-                '直近四半期PBR': '直近四半期<br><span class="sub">PBR</span>',
+                'Forward PER': 'PER<br><span class="sub">Forward</span>',
+                '直近四半期PBR': 'PBR<br><span class="sub">直近四半期末</span>',
                 '配当利回り': '配当利回り',
             }
 
