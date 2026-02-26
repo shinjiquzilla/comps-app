@@ -193,10 +193,67 @@ def _extract_forecast(text):
                     result['ni_forecast'] = ni
                 break
 
-    # フォールバック: テーブル形式でない場合、個別の数値を探す
+    # フォールバック2: forecast_sectionに入れなかった場合、
+    # テキスト全体から「通期」行を探し後続行の数値を収集
+    if not result:
+        result.update(_extract_tsuuki_fallback(lines))
+
+    # フォールバック3: テーブル形式でない場合、個別の数値を探す
     if not result:
         result.update(_extract_forecast_by_label(text))
 
+    return result
+
+
+def _extract_tsuuki_fallback(lines):
+    """
+    フォールバック: 「業績予想」セクションヘッダーが検出できなかった場合、
+    テキスト全体から「通期」行を探し、後続行の整数値を収集する。
+
+    PyMuPDFがテーブルを1セル1行で抽出する場合:
+        通期
+        71,400
+        11.4
+        3,710
+        215.4
+        4,810
+        286.8
+        3,410
+        －
+        91.84
+    → 整数のみ: [71400, 3710, 4810, 3410] → rev, op, (経常), ni
+    """
+    result = {}
+    for i, line in enumerate(lines):
+        ls = line.strip()
+        if not re.match(r'^通期\s*$', ls):
+            continue
+
+        # 「通期」の直後の行から数値を収集
+        collected = []
+        for j in range(i + 1, min(i + 25, len(lines))):
+            next_line = lines[j].strip()
+            if not next_line or next_line in ('－', '-', '―', '—'):
+                continue
+            # 次のセクションに到達したら終了
+            if re.search(r'配当|1株|注[）\)：:]|※|前期|前年', next_line):
+                break
+            # 別の行ラベル（「通期」以外の期間）が来たら終了
+            if re.match(r'^第[1-4１-４]四半期', next_line):
+                break
+            nums_in_line = re.findall(r'[△▲\-]?[\d,]+\.?\d*', next_line)
+            for n in nums_in_line:
+                if '.' in n:
+                    continue  # 小数 = 増減率 or EPS → スキップ
+                val = _parse_amount(n)
+                if val is not None:
+                    collected.append(val)
+        if len(collected) >= 4:
+            result['rev_forecast'] = collected[0]
+            result['op_forecast'] = collected[1]
+            # collected[2] = 経常利益（スキップ）
+            result['ni_forecast'] = collected[3]
+            break
     return result
 
 
