@@ -101,8 +101,13 @@ def _extract_forecast(text):
     for i, line in enumerate(lines):
         line_stripped = line.strip()
 
-        # 「通期」の業績予想を含む行を検出
-        if re.search(r'通期.*予想|予想.*通期|通期.*業績', line_stripped):
+        # 業績予想セクションの見出し行を検出
+        # 「通期」「業績予想」「連結業績予想」等にマッチ
+        # ただし四半期累計の予想は除外（「第X四半期」を含む行）
+        if re.search(r'業績予想|通期.*業績', line_stripped):
+            # 四半期累計の予想セクションはスキップ
+            if re.search(r'第[1-3１-３]四半期', line_stripped):
+                continue
             forecast_section = True
             forecast_lines = []
             continue
@@ -112,6 +117,9 @@ def _extract_forecast(text):
             continue
 
         if forecast_section:
+            # 増減率の行（%を含む）はスキップ
+            if '%' in line_stripped or '％' in line_stripped:
+                continue
             # 数値が含まれる行を収集
             nums = re.findall(r'[△▲\-]?[\d,]+', line_stripped)
             if len(nums) >= 3:
@@ -160,7 +168,10 @@ def _extract_forecast_by_label(text):
     in_forecast = False
     for line in lines:
         ls = line.strip()
-        if re.search(r'通期.*予想|予想.*通期', ls):
+        if re.search(r'業績予想|通期.*業績', ls):
+            # 四半期累計の予想セクションはスキップ
+            if re.search(r'第[1-3１-３]四半期', ls):
+                continue
             in_forecast = True
             continue
         if not in_forecast:
