@@ -176,7 +176,9 @@ def process_company(code_4, search_days, progress_container):
     progress_container.text(f"  📰 {code_4}: TDnet決算短信検索中...")
     try:
         tdnet_data = fetch_tanshin_forecasts(code_4, days=search_days)
-        result['tdnet_raw'] = tdnet_data
+        # session stateの肥大化を防ぐためPDF全文テキストを除外
+        tdnet_summary = {k: v for k, v in tdnet_data.items() if k != 'text'}
+        result['tdnet_raw'] = tdnet_summary
     except Exception as e:
         result['errors'].append(f"TDnet: {e}")
         tdnet_data = {'forecast': {}}
@@ -247,204 +249,213 @@ if generate_btn:
 
         st.session_state.company_data = results
         st.session_state.generation_done = True
+        st.rerun()
 
 # ---------------------------------------------------------------------------
 # Display Results
 # ---------------------------------------------------------------------------
 
 if st.session_state.generation_done:
-    if st.session_state.errors:
-        with st.expander("⚠️ エラー・警告", expanded=True):
-            for err in st.session_state.errors:
-                st.warning(err)
+    try:
+        st.info(f"取得結果: {len(st.session_state.company_data)}社処理済み / エラー: {len(st.session_state.errors)}件")
 
-    # デバッグ情報
-    with st.expander("🔍 デバッグ: 取得データ詳細", expanded=False):
+        if st.session_state.errors:
+            with st.expander("⚠️ エラー・警告", expanded=True):
+                for err in st.session_state.errors:
+                    st.warning(err)
+
+        # デバッグ情報
+        with st.expander("🔍 デバッグ: 取得データ詳細", expanded=False):
+            for r in st.session_state.company_data:
+                code = r.get('code', '?')
+                st.markdown(f"**{code}** (status: {r.get('status', '?')})")
+                if r.get('edinet_raw'):
+                    ed = r['edinet_raw']
+                    st.json({
+                        'company_name': ed.get('company_name', ''),
+                        'yuho_data': ed.get('yuho_data', {}),
+                        'hanki_data': ed.get('hanki_data', {}),
+                        'yuho_doc_id': ed.get('yuho_doc', {}).get('docID') if ed.get('yuho_doc') else None,
+                        'hanki_doc_id': ed.get('hanki_doc', {}).get('docID') if ed.get('hanki_doc') else None,
+                        '_debug': ed.get('_debug', {}),
+                    })
+                else:
+                    st.text("EDINET: データなし")
+                if r.get('tdnet_raw'):
+                    td = r['tdnet_raw']
+                    st.json({
+                        'forecast': td.get('forecast', {}),
+                        'tanshin_count': len(td.get('tanshin_items', [])),
+                        'target': td.get('target_tanshin', {}).get('title') if td.get('target_tanshin') else None,
+                    })
+                else:
+                    st.text("TDnet: データなし")
+                if r.get('stock_raw'):
+                    st.json(r['stock_raw'])
+                else:
+                    st.text("株価: データなし")
+                st.divider()
+
+        companies_for_config = []
         for r in st.session_state.company_data:
-            code = r.get('code', '?')
-            st.markdown(f"**{code}** (status: {r.get('status', '?')})")
-            if r.get('edinet_raw'):
-                ed = r['edinet_raw']
-                st.json({
-                    'company_name': ed.get('company_name', ''),
-                    'yuho_data': ed.get('yuho_data', {}),
-                    'hanki_data': ed.get('hanki_data', {}),
-                    'yuho_doc_id': ed.get('yuho_doc', {}).get('docID') if ed.get('yuho_doc') else None,
-                    'hanki_doc_id': ed.get('hanki_doc', {}).get('docID') if ed.get('hanki_doc') else None,
-                    '_debug': ed.get('_debug', {}),
+            if r.get('data'):
+                companies_for_config.append(r['data'])
+
+        if companies_for_config:
+            st.subheader("取得データ一覧")
+
+            summary_rows = []
+            for c in companies_for_config:
+                multiples = c.get('_multiples') or {}
+                summary_rows.append({
+                    'コード': c.get('code', ''),
+                    '企業名': c.get('name', ''),
+                    '株価': c.get('stock_price'),
+                    '時価総額(百万)': c.get('market_cap'),
+                    '売上高LTM': c.get('rev_ltm'),
+                    '営業利益LTM': c.get('op_ltm'),
+                    'EBITDA LTM': c.get('ebitda_ltm'),
+                    'EV/EBITDA': f"{multiples['ev_ebitda_ltm']:.1f}x" if multiples.get('ev_ebitda_ltm') else 'N/A',
+                    'PER': f"{multiples['per_fwd']:.1f}x" if multiples.get('per_fwd') else 'N/A',
+                    'PBR': f"{multiples['pbr']:.2f}x" if multiples.get('pbr') else 'N/A',
                 })
-            else:
-                st.text("EDINET: データなし")
-            if r.get('tdnet_raw'):
-                td = r['tdnet_raw']
-                st.json({
-                    'forecast': td.get('forecast', {}),
-                    'tanshin_count': len(td.get('tanshin_items', [])),
-                    'target': td.get('target_tanshin', {}).get('title') if td.get('target_tanshin') else None,
-                })
-            else:
-                st.text("TDnet: データなし")
-            if r.get('stock_raw'):
-                st.json(r['stock_raw'])
-            else:
-                st.text("株価: データなし")
+
+            df_summary = pd.DataFrame(summary_rows)
+            st.dataframe(df_summary, use_container_width=True, hide_index=True)
+
+            # --- 手動補完セクション ---
+            st.subheader("手動データ補完")
+            st.caption("自動取得できなかった項目を手動で入力・修正できます。")
+
+            edited_companies = []
+            tabs = st.tabs([f"{c.get('code', '')} {c.get('name', '')}" for c in companies_for_config])
+
+            for idx, (tab, company) in enumerate(zip(tabs, companies_for_config)):
+                with tab:
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.markdown("**基本情報**")
+                        name = st.text_input("企業名", value=company.get('name', ''), key=f"name_{idx}")
+                        sector = st.text_input("セクター", value=company.get('sector', ''), key=f"sector_{idx}")
+                        accounting = st.selectbox("会計基準",
+                                                  ["J-GAAP", "IFRS", "US-GAAP"],
+                                                  index=0, key=f"acc_{idx}")
+                        fy_end = st.text_input("決算月", value=company.get('fy_end', 'Mar'), key=f"fy_{idx}")
+
+                    with col2:
+                        st.markdown("**P&L (LTM)**")
+                        rev = st.number_input("売上高", value=float(company.get('rev_ltm') or 0),
+                                              key=f"rev_{idx}", step=100.0)
+                        op = st.number_input("営業利益", value=float(company.get('op_ltm') or 0),
+                                             key=f"op_{idx}", step=100.0)
+                        ni = st.number_input("純利益", value=float(company.get('ni_ltm') or 0),
+                                             key=f"ni_{idx}", step=100.0)
+                        da = st.number_input("減価償却費", value=float(company.get('da_ltm') or 0),
+                                             key=f"da_{idx}", step=100.0)
+                        ebitda = st.number_input("EBITDA", value=float(company.get('ebitda_ltm') or 0),
+                                                 key=f"ebitda_{idx}", step=100.0)
+
+                    with col3:
+                        st.markdown("**BS・株式**")
+                        cash = st.number_input("現金及び預金", value=float(company.get('cash') or 0),
+                                               key=f"cash_{idx}", step=100.0)
+                        debt = st.number_input("有利子負債", value=float(company.get('total_debt') or 0),
+                                               key=f"debt_{idx}", step=100.0)
+                        eq = st.number_input("純資産", value=float(company.get('equity_parent') or 0),
+                                             key=f"eq_{idx}", step=100.0)
+                        dps = st.number_input("DPS(配当)", value=company.get('dps') or 0.0,
+                                              key=f"dps_{idx}", step=1.0)
+
+                    col4, col5 = st.columns(2)
+                    with col4:
+                        st.markdown("**予想値 (FY E)**")
+                        rev_e = st.number_input("売上高予想", value=float(company.get('rev_forecast') or 0),
+                                                key=f"reve_{idx}", step=100.0)
+                        op_e = st.number_input("営業利益予想", value=float(company.get('op_forecast') or 0),
+                                               key=f"ope_{idx}", step=100.0)
+                        ni_e = st.number_input("純利益予想", value=float(company.get('ni_forecast') or 0),
+                                               key=f"nie_{idx}", step=100.0)
+                        ebitda_e = st.number_input("EBITDA予想", value=float(company.get('ebitda_forecast') or 0),
+                                                   key=f"ebitdae_{idx}", step=100.0)
+
+                    edited = dict(company)
+                    edited['name'] = name
+                    edited['sector'] = sector
+                    edited['accounting'] = accounting
+                    edited['fy_end'] = fy_end
+                    edited['rev_ltm'] = rev if rev != 0 else None
+                    edited['op_ltm'] = op if op != 0 else None
+                    edited['ni_ltm'] = ni if ni != 0 else None
+                    edited['da_ltm'] = da if da != 0 else None
+                    edited['ebitda_ltm'] = ebitda if ebitda != 0 else None
+                    edited['cash'] = cash if cash != 0 else None
+                    edited['total_debt'] = debt if debt != 0 else None
+                    edited['equity_parent'] = eq if eq != 0 else None
+                    edited['dps'] = dps if dps != 0 else None
+                    edited['rev_forecast'] = rev_e if rev_e != 0 else None
+                    edited['op_forecast'] = op_e if op_e != 0 else None
+                    edited['ni_forecast'] = ni_e if ni_e != 0 else None
+                    edited['ebitda_forecast'] = ebitda_e if ebitda_e != 0 else None
+                    edited.pop('_ev', None)
+                    edited.pop('_multiples', None)
+                    edited_companies.append(edited)
+
+            # --- Excel生成 ---
             st.divider()
+            st.subheader("Excel出力")
 
-    companies_for_config = []
-    for r in st.session_state.company_data:
-        if r.get('data'):
-            companies_for_config.append(r['data'])
+            col_dl1, col_dl2 = st.columns(2)
+            with col_dl1:
+                title = st.text_input("タイトル", value="Comparable Company Analysis (Comps)")
+            with col_dl2:
+                date_str = st.text_input("日付", value=datetime.today().strftime("%Y/%m/%d"))
 
-    if companies_for_config:
-        st.subheader("取得データ一覧")
+            notes = st.text_area("ノート（1行1項目）",
+                                 value="Source: EDINET, TDnet, Yahoo Finance\n"
+                                       "Unit: JPY millions\n"
+                                       "LTM = Last Twelve Months")
 
-        summary_rows = []
-        for c in companies_for_config:
-            summary_rows.append({
-                'コード': c.get('code', ''),
-                '企業名': c.get('name', ''),
-                '株価': c.get('stock_price'),
-                '時価総額(百万)': c.get('market_cap'),
-                '売上高LTM': c.get('rev_ltm'),
-                '営業利益LTM': c.get('op_ltm'),
-                'EBITDA LTM': c.get('ebitda_ltm'),
-                'EV/EBITDA': f"{c['_multiples']['ev_ebitda_ltm']:.1f}x" if c.get('_multiples', {}).get('ev_ebitda_ltm') else 'N/A',
-                'PER': f"{c['_multiples']['per_fwd']:.1f}x" if c.get('_multiples', {}).get('per_fwd') else 'N/A',
-                'PBR': f"{c['_multiples']['pbr']:.2f}x" if c.get('_multiples', {}).get('pbr') else 'N/A',
-            })
+            if st.button("📥 Excelファイルを生成・ダウンロード", type="primary"):
+                config = {
+                    'title': title,
+                    'date': date_str,
+                    'currency': 'JPY',
+                    'unit': 'millions',
+                    'companies': edited_companies,
+                    'notes': [n.strip() for n in notes.split('\n') if n.strip()],
+                }
 
-        df_summary = pd.DataFrame(summary_rows)
-        st.dataframe(df_summary, use_container_width=True, hide_index=True)
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
+                    tmp_path = tmp.name
 
-        # --- 手動補完セクション ---
-        st.subheader("手動データ補完")
-        st.caption("自動取得できなかった項目を手動で入力・修正できます。")
-
-        edited_companies = []
-        tabs = st.tabs([f"{c.get('code', '')} {c.get('name', '')}" for c in companies_for_config])
-
-        for idx, (tab, company) in enumerate(zip(tabs, companies_for_config)):
-            with tab:
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.markdown("**基本情報**")
-                    name = st.text_input("企業名", value=company.get('name', ''), key=f"name_{idx}")
-                    sector = st.text_input("セクター", value=company.get('sector', ''), key=f"sector_{idx}")
-                    accounting = st.selectbox("会計基準",
-                                              ["J-GAAP", "IFRS", "US-GAAP"],
-                                              index=0, key=f"acc_{idx}")
-                    fy_end = st.text_input("決算月", value=company.get('fy_end', 'Mar'), key=f"fy_{idx}")
-
-                with col2:
-                    st.markdown("**P&L (LTM)**")
-                    rev = st.number_input("売上高", value=float(company.get('rev_ltm') or 0),
-                                          key=f"rev_{idx}", step=100.0)
-                    op = st.number_input("営業利益", value=float(company.get('op_ltm') or 0),
-                                         key=f"op_{idx}", step=100.0)
-                    ni = st.number_input("純利益", value=float(company.get('ni_ltm') or 0),
-                                         key=f"ni_{idx}", step=100.0)
-                    da = st.number_input("減価償却費", value=float(company.get('da_ltm') or 0),
-                                         key=f"da_{idx}", step=100.0)
-                    ebitda = st.number_input("EBITDA", value=float(company.get('ebitda_ltm') or 0),
-                                             key=f"ebitda_{idx}", step=100.0)
-
-                with col3:
-                    st.markdown("**BS・株式**")
-                    cash = st.number_input("現金及び預金", value=float(company.get('cash') or 0),
-                                           key=f"cash_{idx}", step=100.0)
-                    debt = st.number_input("有利子負債", value=float(company.get('total_debt') or 0),
-                                           key=f"debt_{idx}", step=100.0)
-                    eq = st.number_input("純資産", value=float(company.get('equity_parent') or 0),
-                                         key=f"eq_{idx}", step=100.0)
-                    dps = st.number_input("DPS(配当)", value=company.get('dps') or 0.0,
-                                          key=f"dps_{idx}", step=1.0)
-
-                col4, col5 = st.columns(2)
-                with col4:
-                    st.markdown("**予想値 (FY E)**")
-                    rev_e = st.number_input("売上高予想", value=float(company.get('rev_forecast') or 0),
-                                            key=f"reve_{idx}", step=100.0)
-                    op_e = st.number_input("営業利益予想", value=float(company.get('op_forecast') or 0),
-                                           key=f"ope_{idx}", step=100.0)
-                    ni_e = st.number_input("純利益予想", value=float(company.get('ni_forecast') or 0),
-                                           key=f"nie_{idx}", step=100.0)
-                    ebitda_e = st.number_input("EBITDA予想", value=float(company.get('ebitda_forecast') or 0),
-                                               key=f"ebitdae_{idx}", step=100.0)
-
-                edited = dict(company)
-                edited['name'] = name
-                edited['sector'] = sector
-                edited['accounting'] = accounting
-                edited['fy_end'] = fy_end
-                edited['rev_ltm'] = rev if rev != 0 else None
-                edited['op_ltm'] = op if op != 0 else None
-                edited['ni_ltm'] = ni if ni != 0 else None
-                edited['da_ltm'] = da if da != 0 else None
-                edited['ebitda_ltm'] = ebitda if ebitda != 0 else None
-                edited['cash'] = cash if cash != 0 else None
-                edited['total_debt'] = debt if debt != 0 else None
-                edited['equity_parent'] = eq if eq != 0 else None
-                edited['dps'] = dps if dps != 0 else None
-                edited['rev_forecast'] = rev_e if rev_e != 0 else None
-                edited['op_forecast'] = op_e if op_e != 0 else None
-                edited['ni_forecast'] = ni_e if ni_e != 0 else None
-                edited['ebitda_forecast'] = ebitda_e if ebitda_e != 0 else None
-                edited.pop('_ev', None)
-                edited.pop('_multiples', None)
-                edited_companies.append(edited)
-
-        # --- Excel生成 ---
-        st.divider()
-        st.subheader("Excel出力")
-
-        col_dl1, col_dl2 = st.columns(2)
-        with col_dl1:
-            title = st.text_input("タイトル", value="Comparable Company Analysis (Comps)")
-        with col_dl2:
-            date_str = st.text_input("日付", value=datetime.today().strftime("%Y/%m/%d"))
-
-        notes = st.text_area("ノート（1行1項目）",
-                             value="Source: EDINET, TDnet, Yahoo Finance\n"
-                                   "Unit: JPY millions\n"
-                                   "LTM = Last Twelve Months")
-
-        if st.button("📥 Excelファイルを生成・ダウンロード", type="primary"):
-            config = {
-                'title': title,
-                'date': date_str,
-                'currency': 'JPY',
-                'unit': 'millions',
-                'companies': edited_companies,
-                'notes': [n.strip() for n in notes.split('\n') if n.strip()],
-            }
-
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
-                tmp_path = tmp.name
-
-            try:
-                generate_comps(config, tmp_path)
-                with open(tmp_path, 'rb') as f:
-                    excel_bytes = f.read()
-
-                st.download_button(
-                    label="📥 Comps_Table.xlsx をダウンロード",
-                    data=excel_bytes,
-                    file_name=f"Comps_Table_{datetime.today().strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-                st.success("Excel生成完了！")
-            except Exception as e:
-                st.error(f"Excel生成エラー: {e}")
-                st.code(traceback.format_exc())
-            finally:
                 try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+                    generate_comps(config, tmp_path)
+                    with open(tmp_path, 'rb') as f:
+                        excel_bytes = f.read()
 
-    else:
-        st.warning("データが取得できた企業がありません。証券コードと設定を確認してください。")
+                    st.download_button(
+                        label="📥 Comps_Table.xlsx をダウンロード",
+                        data=excel_bytes,
+                        file_name=f"Comps_Table_{datetime.today().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                    st.success("Excel生成完了！")
+                except Exception as e:
+                    st.error(f"Excel生成エラー: {e}")
+                    st.code(traceback.format_exc())
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+
+        else:
+            st.warning("データが取得できた企業がありません。証券コードと設定を確認してください。")
+
+    except Exception as e:
+        st.error(f"結果表示エラー: {e}")
+        st.code(traceback.format_exc())
 
 # ---------------------------------------------------------------------------
 # Footer
