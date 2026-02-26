@@ -267,10 +267,16 @@ if generate_btn:
             tdnet_data = {'forecast': {}}
 
             # 株価（同日中はキャッシュから取得）
+            from stock_fetcher import _load_stock_cache
             base_progress = 0.65 + (i / len(codes)) * 0.30
             progress_bar.progress(min(base_progress, 0.95))
-            status_container.info(f"📈 株価: {code} ({i+1}/{len(codes)})")
-            progress_text.text(f"  📈 {code}: 株価取得中...")
+            _stock_cached = use_cache and _load_stock_cache(code) is not None
+            if _stock_cached:
+                status_container.info(f"📈 株価: {code} キャッシュから読み込み ({i+1}/{len(codes)})")
+                progress_text.text(f"  📈 {code}: キャッシュ読み込み...")
+            else:
+                status_container.info(f"📈 株価: {code} ({i+1}/{len(codes)})")
+                progress_text.text(f"  📈 {code}: yfinanceから取得中...")
             stock_data = {'stock_price': None, 'shares_outstanding': None, 'market_cap': None}
             try:
                 stock_data = fetch_stock_info(code, use_cache=use_cache)
@@ -296,8 +302,8 @@ if generate_btn:
 
             results.append(result)
 
-            # yfinance レート制限回避: 各社の間に3秒待機
-            if i < len(codes) - 1:
+            # yfinance レート制限回避: キャッシュミス時のみ待機
+            if not _stock_cached and i < len(codes) - 1:
                 progress_text.text("  ⏳ レート制限回避のため待機中...")
                 time.sleep(3)
 
