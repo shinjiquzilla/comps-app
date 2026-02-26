@@ -559,19 +559,31 @@ if st.session_state.generation_done:
                 df_summary[col] = pd.to_numeric(df_summary[col], errors='coerce')
 
             # column_config: 数値フォーマット＋ソート対応
+            # 整数列はDataFrame側で事前フォーマットしてTextColumnで表示（確実な桁区切り）
+            _int_cols = ['株価（円）', '時価総額（百万円）', 'EV（百万円）',
+                         '売上高LTM（百万円）', '営業利益LTM（百万円）', 'EBITDA LTM（百万円）']
+            for _ic in _int_cols:
+                df_summary[_ic] = df_summary[_ic].apply(
+                    lambda v: f"{int(v):,}" if pd.notna(v) else "—"
+                )
+
+            # マルチプル列もフォーマット
+            df_summary['EV/EBITDA LTM'] = df_summary['EV/EBITDA LTM'].apply(
+                lambda v: f"{v:.1f}x" if pd.notna(v) else "—"
+            )
+            df_summary['FY PER'] = df_summary['FY PER'].apply(
+                lambda v: f"{v:.1f}x" if pd.notna(v) else "—"
+            )
+            df_summary['直近四半期PBR'] = df_summary['直近四半期PBR'].apply(
+                lambda v: f"{v:.2f}x" if pd.notna(v) else "—"
+            )
+            df_summary['配当利回り'] = df_summary['配当利回り'].apply(
+                lambda v: f"{v:.1f}%" if pd.notna(v) else "—"
+            )
+
             _col_config = {
                 'コード': st.column_config.TextColumn('コード'),
                 '企業名': st.column_config.TextColumn('企業名'),
-                '株価（円）': st.column_config.NumberColumn('株価（円）', format="%,.0f"),
-                '時価総額（百万円）': st.column_config.NumberColumn('時価総額（百万円）', format="%,.0f"),
-                'EV（百万円）': st.column_config.NumberColumn('EV（百万円）', format="%,.0f"),
-                '売上高LTM（百万円）': st.column_config.NumberColumn('売上高LTM（百万円）', format="%,.0f"),
-                '営業利益LTM（百万円）': st.column_config.NumberColumn('営業利益LTM（百万円）', format="%,.0f"),
-                'EBITDA LTM（百万円）': st.column_config.NumberColumn('EBITDA LTM（百万円）', format="%,.0f"),
-                'EV/EBITDA LTM': st.column_config.NumberColumn('EV/EBITDA LTM', format="%.1fx"),
-                'FY PER': st.column_config.NumberColumn('FY PER', format="%.1fx"),
-                '直近四半期PBR': st.column_config.NumberColumn('直近四半期PBR', format="%.2fx"),
-                '配当利回り': st.column_config.NumberColumn('配当利回り', format="%.1f%%"),
             }
 
             st.dataframe(df_summary, use_container_width=True, hide_index=True,
