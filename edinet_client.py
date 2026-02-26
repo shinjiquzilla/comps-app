@@ -40,9 +40,10 @@ KEY_FILE = Path.home() / ".edinet_key"
 # 要素ID → 内部キー マッピング（XBRL taxonomy 標準名）
 # 有報(asr) / 半期報(ssr) 共通
 ELEMENT_MAP = {
+    # === J-GAAP ===
     # P&L
     'jppfs_cor:NetSales': 'revenue',
-    'jppfs_cor:Revenue': 'revenue',  # IFRS
+    'jppfs_cor:Revenue': 'revenue',
     'jppfs_cor:OperatingIncome': 'operating_income',
     'jppfs_cor:OrdinaryIncome': 'ordinary_income',
     'jppfs_cor:ProfitLossAttributableToOwnersOfParent': 'net_income',
@@ -65,10 +66,36 @@ ELEMENT_MAP = {
     'jppfs_cor:NetAssets': 'net_assets',
     'jppfs_cor:ShareholdersEquity': 'shareholders_equity',
     'jppfs_cor:EquityAttributableToOwnersOfParent': 'equity_parent',
+
+    # === IFRS (jpigp_cor: prefix) ===
+    # P&L
+    'jpigp_cor:NetSalesIFRS': 'revenue',
+    'jpigp_cor:RevenueIFRS': 'revenue',
+    'jpigp_cor:OperatingIncomeIFRS': 'operating_income',
+    'jpigp_cor:OperatingProfitIFRS': 'operating_income',
+    'jpigp_cor:ProfitLossAttributableToOwnersOfParentIFRS': 'net_income',
+    'jpigp_cor:ProfitLossIFRS': 'profit_loss',
+    # CF statement D&A
+    'jpigp_cor:DepreciationAndAmortizationOpeCFIFRS': 'depreciation',
+    # BS
+    'jpigp_cor:CashAndCashEquivalentsIFRS': 'cash',
+    'jpigp_cor:InvestmentSecuritiesIFRS': 'investment_securities',
+    'jpigp_cor:ShortTermBorrowingsIFRS': 'short_term_debt',
+    'jpigp_cor:ShortTermLoansPayableIFRS': 'short_term_debt',
+    'jpigp_cor:LongTermLoansPayableIFRS': 'long_term_debt',
+    'jpigp_cor:LongTermDebtIFRS': 'long_term_debt',
+    'jpigp_cor:BondsPayableIFRS': 'bonds',
+    'jpigp_cor:CurrentPortionOfLongTermLoansPayableIFRS': 'current_long_term_debt',
+    'jpigp_cor:LeaseLiabilitiesCLIFRS': 'lease_debt_current',
+    'jpigp_cor:LeaseLiabilitiesNCLIFRS': 'lease_debt_noncurrent',
+    'jpigp_cor:NetAssetsIFRS': 'net_assets',
+    'jpigp_cor:EquityAttributableToOwnersOfParentIFRS': 'equity_parent',
+    'jpigp_cor:ShareholdersEquityIFRS': 'shareholders_equity',
 }
 
 # 経営指標等セクションのフォールバック用（項目名ベース）
 SUMMARY_ELEMENT_MAP = {
+    # J-GAAP
     'jpcrp_cor:NetSalesSummaryOfBusinessResults': 'revenue',
     'jpcrp_cor:OperatingIncomeLossSummaryOfBusinessResults': 'operating_income',
     'jpcrp_cor:OrdinaryIncomeLossSummaryOfBusinessResults': 'ordinary_income',
@@ -77,6 +104,14 @@ SUMMARY_ELEMENT_MAP = {
     'jpcrp_cor:NumberOfIssuedSharesEndOfTermIncludingTreasurySharesSummaryOfBusinessResults': 'shares_issued',
     'jpcrp_cor:NumberOfTreasurySharesEndOfTermSummaryOfBusinessResults': 'treasury_shares',
     'jpcrp_cor:DividendPaidPerShareSummaryOfBusinessResults': 'dps',
+    # IFRS
+    'jpcrp_cor:RevenueIFRSSummaryOfBusinessResults': 'revenue',
+    'jpcrp_cor:NetSalesIFRSSummaryOfBusinessResults': 'revenue',
+    'jpcrp_cor:OperatingProfitLossIFRSSummaryOfBusinessResults': 'operating_income',
+    'jpcrp_cor:ProfitLossAttributableToOwnersOfParentIFRSSummaryOfBusinessResults': 'net_income',
+    'jpcrp_cor:ProfitLossIFRSSummaryOfBusinessResults': 'profit_loss',
+    'jpcrp_cor:EquityToAssetRatioIFRSSummaryOfBusinessResults': 'equity_ratio',
+    'jpcrp_cor:DividendPaidPerShareIFRSSummaryOfBusinessResults': 'dps',
 }
 
 
@@ -289,15 +324,29 @@ def extract_financial_data(zip_bytes):
         unit = clean(parts[7])
         value_str = clean(parts[8])
 
-        # 当期（有報: 当期/当期末、半期報: 当中間期/当中間期末）・連結のみ
+        # 当期（有報: 当期/当期末、半期報: 当中間期/当中間期末）
         current_periods = ('当期', '当期末', '当中間期', '当中間期末')
         if relative_year not in current_periods:
             continue
-        if consolidated != '連結':
+        # 連結 or その他（IFRS企業は「その他」）を受け入れ。個別は除外。
+        if consolidated not in ('連結', 'その他'):
             continue
 
-        # 要素IDでマッチング
+        # 要素IDでマッチング（完全一致 + IFRS接尾辞付きの動的マッチ）
         key = ELEMENT_MAP.get(element_id) or SUMMARY_ELEMENT_MAP.get(element_id)
+        # 半期報告書で会社固有プレフィックス（例: jpcrp040300-ssr_E01807-000:〜IFRS）の場合
+        # コロン以降の要素名部分で再マッチ
+        if key is None and ':' in element_id:
+            local_name = element_id.split(':', 1)[1]
+            for map_id, map_key in ELEMENT_MAP.items():
+                if map_id.split(':', 1)[1] == local_name:
+                    key = map_key
+                    break
+            if key is None:
+                for map_id, map_key in SUMMARY_ELEMENT_MAP.items():
+                    if map_id.split(':', 1)[1] == local_name:
+                        key = map_key
+                        break
         if key is None:
             continue
 
