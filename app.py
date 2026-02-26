@@ -370,7 +370,7 @@ if st.session_state.generation_done:
                     '売上高LTM': c.get('rev_ltm'),
                     '営業利益LTM': c.get('op_ltm'),
                     'EBITDA LTM': c.get('ebitda_ltm'),
-                    'EV/EBITDA': f"{multiples['ev_ebitda_ltm']:.1f}x" if multiples.get('ev_ebitda_ltm') else 'N/A',
+                    'EV/EBITDA LTM': f"{multiples['ev_ebitda_ltm']:.1f}x" if multiples.get('ev_ebitda_ltm') else 'N/A',
                     'FY PER': f"{per_fwd:.1f}x" if per_fwd else 'N/A',
                     '直近四半期PBR': f"{multiples['pbr']:.2f}x" if multiples.get('pbr') else 'N/A',
                 })
