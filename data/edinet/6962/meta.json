@@ -1,0 +1,28 @@
+{
+  "last_searched": "2026-02-26",
+  "search_days": 400,
+  "company_name": "大真空",
+  "docs": [
+    {
+      "docID": "S100VQ74",
+      "docTypeCode": "170",
+      "periodEnd": null,
+      "filerName": "株式会社大真空",
+      "secCode": "69620"
+    },
+    {
+      "docID": "S100W5YH",
+      "docTypeCode": "120",
+      "periodEnd": "2025-03-31",
+      "filerName": "株式会社大真空",
+      "secCode": "69620"
+    },
+    {
+      "docID": "S100X170",
+      "docTypeCode": "160",
+      "periodEnd": "2026-03-31",
+      "filerName": "株式会社大真空",
+      "secCode": "69620"
+    }
+  ]
+}
