@@ -51,8 +51,10 @@ import io
 import json
 import statistics
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+# CLIモードのみstdout/stderrをUTF-8に設定（Streamlit環境では不要・有害）
+if __name__ == '__main__':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
