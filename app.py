@@ -333,39 +333,39 @@ if st.session_state.generation_done:
 
                     with col2:
                         st.markdown("**P&L - LTM（百万円）**")
-                        rev = st.number_input("売上高（百万円）", value=float(company.get('rev_ltm') or 0),
-                                              key=f"rev_{idx}", step=100.0)
-                        op = st.number_input("営業利益（百万円）", value=float(company.get('op_ltm') or 0),
-                                             key=f"op_{idx}", step=100.0)
-                        ni = st.number_input("純利益（百万円）", value=float(company.get('ni_ltm') or 0),
-                                             key=f"ni_{idx}", step=100.0)
-                        da = st.number_input("減価償却費（百万円）", value=float(company.get('da_ltm') or 0),
-                                             key=f"da_{idx}", step=100.0)
-                        ebitda = st.number_input("EBITDA（百万円）", value=float(company.get('ebitda_ltm') or 0),
-                                                 key=f"ebitda_{idx}", step=100.0)
+                        rev = st.number_input("売上高（百万円）", value=int(company.get('rev_ltm') or 0),
+                                              key=f"rev_{idx}", step=1, format="%d")
+                        op = st.number_input("営業利益（百万円）", value=int(company.get('op_ltm') or 0),
+                                             key=f"op_{idx}", step=1, format="%d")
+                        ni = st.number_input("純利益（百万円）", value=int(company.get('ni_ltm') or 0),
+                                             key=f"ni_{idx}", step=1, format="%d")
+                        da = st.number_input("減価償却費（百万円）", value=int(company.get('da_ltm') or 0),
+                                             key=f"da_{idx}", step=1, format="%d")
+                        ebitda = st.number_input("EBITDA（百万円）", value=int(company.get('ebitda_ltm') or 0),
+                                                 key=f"ebitda_{idx}", step=1, format="%d")
 
                     with col3:
                         st.markdown("**BS・株式（百万円）**")
-                        cash = st.number_input("現金及び預金（百万円）", value=float(company.get('cash') or 0),
-                                               key=f"cash_{idx}", step=100.0)
-                        debt = st.number_input("有利子負債（百万円）", value=float(company.get('total_debt') or 0),
-                                               key=f"debt_{idx}", step=100.0)
-                        eq = st.number_input("純資産（百万円）", value=float(company.get('equity_parent') or 0),
-                                             key=f"eq_{idx}", step=100.0)
-                        dps = st.number_input("DPS - 配当（円）", value=company.get('dps') or 0.0,
-                                              key=f"dps_{idx}", step=1.0)
+                        cash = st.number_input("現金及び預金（百万円）", value=int(company.get('cash') or 0),
+                                               key=f"cash_{idx}", step=1, format="%d")
+                        debt = st.number_input("有利子負債（百万円）", value=int(company.get('total_debt') or 0),
+                                               key=f"debt_{idx}", step=1, format="%d")
+                        eq = st.number_input("純資産（百万円）", value=int(company.get('equity_parent') or 0),
+                                             key=f"eq_{idx}", step=1, format="%d")
+                        dps = st.number_input("DPS - 配当（円）", value=float(company.get('dps') or 0),
+                                              key=f"dps_{idx}", step=1.0, format="%.1f")
 
                     col4, col5 = st.columns(2)
                     with col4:
                         st.markdown("**予想値 - FY E（百万円）**")
-                        rev_e = st.number_input("売上高予想（百万円）", value=float(company.get('rev_forecast') or 0),
-                                                key=f"reve_{idx}", step=100.0)
-                        op_e = st.number_input("営業利益予想（百万円）", value=float(company.get('op_forecast') or 0),
-                                               key=f"ope_{idx}", step=100.0)
-                        ni_e = st.number_input("純利益予想（百万円）", value=float(company.get('ni_forecast') or 0),
-                                               key=f"nie_{idx}", step=100.0)
-                        ebitda_e = st.number_input("EBITDA予想（百万円）", value=float(company.get('ebitda_forecast') or 0),
-                                                   key=f"ebitdae_{idx}", step=100.0)
+                        rev_e = st.number_input("売上高予想（百万円）", value=int(company.get('rev_forecast') or 0),
+                                                key=f"reve_{idx}", step=1, format="%d")
+                        op_e = st.number_input("営業利益予想（百万円）", value=int(company.get('op_forecast') or 0),
+                                               key=f"ope_{idx}", step=1, format="%d")
+                        ni_e = st.number_input("純利益予想（百万円）", value=int(company.get('ni_forecast') or 0),
+                                               key=f"nie_{idx}", step=1, format="%d")
+                        ebitda_e = st.number_input("EBITDA予想（百万円）", value=int(company.get('ebitda_forecast') or 0),
+                                                   key=f"ebitdae_{idx}", step=1, format="%d")
 
                     edited = dict(company)
                     edited['name'] = name
