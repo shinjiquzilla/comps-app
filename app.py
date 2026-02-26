@@ -29,7 +29,7 @@ import pandas as pd
 # 自身のディレクトリをパスに追加
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from edinet_client import fetch_company_financials, load_api_key
+from edinet_client import fetch_company_financials, fetch_companies_batch, load_api_key
 from tdnet_client import fetch_tanshin_forecasts
 from stock_fetcher import fetch_stock_info
 from financial_calc import build_company_data
@@ -73,15 +73,18 @@ with st.sidebar:
         if api_key_input:
             os.environ["EDINET_API_KEY"] = api_key_input
 
-    search_days = st.slider("検索期間（日数）", 60, 730, 400, step=30,
+    search_days = st.slider("検索期間（日数）", 30, 730, 90, step=30,
                             help="EDINET/TDnetを過去何日分検索するか")
+
+    enable_tdnet = st.checkbox("TDnet検索を有効化", value=False,
+                               help="決算短信の業績予想を取得（1社あたり数分追加）")
 
     st.divider()
 
     st.markdown("""
     **データソース:**
     - 📄 EDINET API (有報・半期報)
-    - 📰 TDnet (決算短信・業績予想)
+    - 📰 TDnet (決算短信・業績予想) ※オプション
     - 📈 yfinance (株価)
     """)
 
@@ -118,79 +121,6 @@ if 'errors' not in st.session_state:
 # Generation Logic
 # ---------------------------------------------------------------------------
 
-def process_company(code_4, search_days, progress_container):
-    """1社分のデータを取得・計算。"""
-    result = {
-        'code': code_4,
-        'status': 'processing',
-        'errors': [],
-        'data': None,
-        'edinet_raw': None,
-        'tdnet_raw': None,
-        'stock_raw': None,
-    }
-
-    # Step 1: EDINET（API Key がある場合のみ）
-    edinet_available = False
-    try:
-        load_api_key()
-        edinet_available = True
-    except RuntimeError:
-        pass
-
-    edinet_data = {
-        'company_name': '',
-        'yuho_data': {},
-        'hanki_data': {},
-        'yuho_doc': None,
-        'hanki_doc': None,
-    }
-
-    if edinet_available:
-        progress_container.text(f"  📄 {code_4}: EDINET検索中...")
-        try:
-            edinet_data = fetch_company_financials(code_4, days=search_days)
-            result['edinet_raw'] = edinet_data
-        except Exception as e:
-            result['errors'].append(f"EDINET: {e}")
-    else:
-        result['errors'].append("EDINET: API Key未設定（スキップ）")
-
-    # Step 2: TDnet
-    progress_container.text(f"  📰 {code_4}: TDnet決算短信検索中...")
-    try:
-        tdnet_data = fetch_tanshin_forecasts(code_4, days=search_days)
-        # session stateの肥大化を防ぐためPDF全文テキストを除外
-        tdnet_summary = {k: v for k, v in tdnet_data.items() if k != 'text'}
-        result['tdnet_raw'] = tdnet_summary
-    except Exception as e:
-        result['errors'].append(f"TDnet: {e}")
-        tdnet_data = {'forecast': {}}
-
-    # Step 3: Stock Price
-    progress_container.text(f"  📈 {code_4}: 株価取得中...")
-    try:
-        stock_data = fetch_stock_info(code_4)
-        result['stock_raw'] = stock_data
-    except Exception as e:
-        result['errors'].append(f"株価: {e}")
-        stock_data = {'stock_price': None, 'shares_outstanding': None, 'market_cap': None}
-
-    # Step 4: Build company data
-    progress_container.text(f"  🔢 {code_4}: 計算中...")
-    try:
-        company = build_company_data(code_4, edinet_data, tdnet_data, stock_data)
-        if not company.get('name') and stock_data.get('company_name_en'):
-            company['name'] = stock_data['company_name_en']
-        result['data'] = company
-        result['status'] = 'done'
-    except Exception as e:
-        result['errors'].append(f"計算: {e}")
-        result['status'] = 'error'
-
-    return result
-
-
 if generate_btn:
     codes = [c.strip() for c in codes_input.split(",") if c.strip()]
     if not codes:
@@ -215,17 +145,88 @@ if generate_btn:
         status_container = st.empty()
         progress_text = st.empty()
 
+        # ---- Step 1: EDINET一括検索（全社まとめて1回の日付ループ） ----
+        edinet_results = {}  # code_4 -> edinet_data
+        if edinet_available:
+            status_container.info(f"📄 EDINET: {len(codes)}社分を一括検索中（{search_days}日間）...")
+
+            def edinet_progress(current, total):
+                progress_bar.progress(current / total * 0.6)  # 全体の60%をEDINETに割り当て
+                progress_text.text(f"  📄 EDINET検索: {current}/{total}日")
+
+            try:
+                edinet_results = fetch_companies_batch(
+                    codes, days=search_days, progress_callback=edinet_progress
+                )
+            except Exception as e:
+                st.session_state.errors.append(f"EDINET一括検索エラー: {e}")
+        else:
+            st.session_state.errors.append("EDINET: API Key未設定（スキップ）")
+
+        # ---- Step 2: 各社ごとにTDnet（オプション）・株価・計算 ----
         results = []
         for i, code in enumerate(codes):
-            status_container.info(f"処理中: {code} ({i+1}/{len(codes)})")
-            progress_bar.progress((i) / len(codes))
+            result = {
+                'code': code,
+                'status': 'processing',
+                'errors': [],
+                'data': None,
+                'edinet_raw': None,
+                'tdnet_raw': None,
+                'stock_raw': None,
+            }
 
-            result = process_company(code, search_days, progress_text)
-            results.append(result)
+            # EDINET結果を取得
+            edinet_data = edinet_results.get(code, {
+                'company_name': '',
+                'yuho_data': {},
+                'hanki_data': {},
+                'yuho_doc': None,
+                'hanki_doc': None,
+            })
+            result['edinet_raw'] = edinet_data if edinet_data.get('yuho_data') or edinet_data.get('hanki_data') else None
+
+            # TDnet（オプション）
+            tdnet_data = {'forecast': {}}
+            if enable_tdnet:
+                status_container.info(f"📰 TDnet: {code} ({i+1}/{len(codes)})")
+                progress_text.text(f"  📰 {code}: TDnet決算短信検索中...")
+                try:
+                    tdnet_data = fetch_tanshin_forecasts(code, days=search_days)
+                    tdnet_summary = {k: v for k, v in tdnet_data.items() if k != 'text'}
+                    result['tdnet_raw'] = tdnet_summary
+                except Exception as e:
+                    result['errors'].append(f"TDnet: {e}")
+
+            # 株価
+            base_progress = 0.6 + (i / len(codes)) * 0.35
+            progress_bar.progress(min(base_progress, 0.95))
+            status_container.info(f"📈 株価: {code} ({i+1}/{len(codes)})")
+            progress_text.text(f"  📈 {code}: 株価取得中...")
+            stock_data = {'stock_price': None, 'shares_outstanding': None, 'market_cap': None}
+            try:
+                stock_data = fetch_stock_info(code)
+                result['stock_raw'] = stock_data
+            except Exception as e:
+                result['errors'].append(f"株価: {e}")
+
+            # 計算
+            progress_text.text(f"  🔢 {code}: 計算中...")
+            try:
+                company = build_company_data(code, edinet_data, tdnet_data, stock_data)
+                if not company.get('name') and stock_data.get('company_name_en'):
+                    company['name'] = stock_data['company_name_en']
+                result['data'] = company
+                result['status'] = 'done'
+            except Exception as e:
+                result['errors'].append(f"計算: {e}")
+                result['status'] = 'error'
 
             if result['errors']:
                 for err in result['errors']:
                     st.session_state.errors.append(f"{code}: {err}")
+
+            results.append(result)
 
             # yfinance レート制限回避: 各社の間に3秒待機
             if i < len(codes) - 1:

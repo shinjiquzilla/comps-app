@@ -181,12 +181,28 @@ def fetch_doc_list(session, api_key, date_str):
     return data.get("results", [])
 
 
-def search_documents(session, api_key, sec_code_5, days=400, doc_types=None,
+def search_documents(session, api_key, sec_code_5, days=90, doc_types=None,
                      progress_callback=None):
+    """1社分の書類検索（後方互換用）。"""
+    results = search_documents_batch(
+        session, api_key, [sec_code_5], days=days,
+        doc_types=doc_types, progress_callback=progress_callback
+    )
+    return results.get(sec_code_5, [])
+
+
+def search_documents_batch(session, api_key, sec_codes_5, days=90, doc_types=None,
+                           progress_callback=None):
+    """
+    複数社の書類を一括検索。日付ループは1回だけ。
+    Returns: dict {sec_code_5: [doc, ...]}
+    """
     if doc_types is None:
         doc_types = {"120", "130", "160", "170"}
 
-    found = []
+    sec_set = set(sec_codes_5)
+    found = {sc: [] for sc in sec_codes_5}
+
     end_date = datetime.today()
     start_date = end_date - timedelta(days=days)
     total_days = (end_date - start_date).days + 1
@@ -196,15 +212,15 @@ def search_documents(session, api_key, sec_code_5, days=400, doc_types=None,
     while current <= end_date:
         date_str = current.strftime("%Y-%m-%d")
         processed += 1
-        if progress_callback and processed % 10 == 0:
-            progress_callback(processed / total_days)
+        if progress_callback:
+            progress_callback(processed, total_days)
 
         docs = fetch_doc_list(session, api_key, date_str)
         for doc in docs:
             sc = doc.get("secCode") or ""
             dt = doc.get("docTypeCode") or ""
-            if sc == sec_code_5 and dt in doc_types:
-                found.append(doc)
+            if sc in sec_set and dt in doc_types:
+                found[sc].append(doc)
 
         current += timedelta(days=1)
         time.sleep(1)
@@ -387,7 +403,7 @@ def extract_financial_data(zip_bytes):
 # High-level API: 1社分の財務データ取得
 # ---------------------------------------------------------------------------
 
-def fetch_company_financials(code_4, days=400, progress_callback=None):
+def fetch_company_financials(code_4, days=90, progress_callback=None):
     """
     証券コード（4桁）から EDINET type=5 CSV 経由で財務データを取得。
     """
@@ -398,8 +414,45 @@ def fetch_company_financials(code_4, days=400, progress_callback=None):
     docs = search_documents(session, api_key, sec_code, days=days,
                             progress_callback=progress_callback)
 
+    return _process_docs_for_company(session, api_key, code_4, docs)
+
+
+def fetch_companies_batch(codes_4, days=90, progress_callback=None):
+    """
+    複数社の財務データを一括取得。EDINET日付検索は1回のみ。
+    Returns: dict {code_4: result_dict}
+    """
+    api_key = load_api_key()
+    session = make_session(verify_ssl=False)
+
+    sec_codes = {to_sec_code(c): c for c in codes_4}  # 5桁→4桁の逆引き
+
+    # 全社まとめて書類検索（日付ループは1回だけ）
+    all_docs = search_documents_batch(
+        session, api_key, list(sec_codes.keys()), days=days,
+        progress_callback=progress_callback
+    )
+
+    # 各社のCSVダウンロード＆パース
+    results = {}
+    for sec5, code4 in sec_codes.items():
+        docs = all_docs.get(sec5, [])
+        results[code4] = _process_docs_for_company(session, api_key, code4, docs)
+
+    return results
+
+
+def _process_docs_for_company(session, api_key, code_4, docs):
+    """1社分の書類リストからCSVダウンロード・パースを行う。"""
     if not docs:
-        raise ValueError(f"証券コード {code_4} の書類が EDINET で見つかりません。")
+        return {
+            'company_name': '',
+            'yuho_data': {},
+            'hanki_data': {},
+            'yuho_doc': None,
+            'hanki_doc': None,
+            '_debug': {},
+        }
 
     classified = classify_documents(docs)
 
@@ -418,7 +471,6 @@ def fetch_company_financials(code_4, days=400, progress_callback=None):
         'hanki_doc': classified.get('hanki'),
     }
 
-    # 有報 type=5 CSV
     debug_info = {}
     if 'yuho' in classified:
         doc_id = classified['yuho'].get('docID', '')
@@ -430,7 +482,6 @@ def fetch_company_financials(code_4, days=400, progress_callback=None):
             debug_info['yuho_csv_lines'] = len(lines)
             result['yuho_data'] = extract_financial_data(zip_bytes)
 
-    # 半期報告書 type=5 CSV
     if 'hanki' in classified:
         doc_id = classified['hanki'].get('docID', '')
         if doc_id:
