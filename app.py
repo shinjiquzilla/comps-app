@@ -357,6 +357,11 @@ if st.session_state.generation_done:
             summary_rows = []
             for c in companies_for_config:
                 multiples = c.get('_multiples') or {}
+                # PERを決算短信の予想純利益で再計算（アップロード後に反映）
+                tanshin = st.session_state.get('tanshin_forecasts', {}).get(c.get('code', ''), {})
+                ni_fwd = tanshin.get('ni_forecast') or c.get('ni_forecast')
+                mcap = c.get('market_cap')
+                per_fwd = mcap / ni_fwd if mcap and ni_fwd and ni_fwd > 0 else None
                 summary_rows.append({
                     'コード': c.get('code', ''),
                     '企業名': c.get('name', ''),
@@ -366,8 +371,8 @@ if st.session_state.generation_done:
                     '営業利益LTM': c.get('op_ltm'),
                     'EBITDA LTM': c.get('ebitda_ltm'),
                     'EV/EBITDA': f"{multiples['ev_ebitda_ltm']:.1f}x" if multiples.get('ev_ebitda_ltm') else 'N/A',
-                    'PER': f"{multiples['per_fwd']:.1f}x" if multiples.get('per_fwd') else 'N/A',
-                    'PBR': f"{multiples['pbr']:.2f}x" if multiples.get('pbr') else 'N/A',
+                    'FY PER': f"{per_fwd:.1f}x" if per_fwd else 'N/A',
+                    '直近四半期PBR': f"{multiples['pbr']:.2f}x" if multiples.get('pbr') else 'N/A',
                 })
 
             df_summary = pd.DataFrame(summary_rows)
