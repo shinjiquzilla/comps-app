@@ -544,7 +544,7 @@ if st.session_state.generation_done:
                     '営業利益LTM（百万円）': c.get('op_ltm'),
                     'EBITDA LTM（百万円）': c.get('ebitda_ltm'),
                     'EV/EBITDA LTM': multiples.get('ev_ebitda_ltm'),
-                    'FY PER': per_fwd,
+                    'Forward PER': per_fwd,
                     '直近四半期PBR': multiples.get('pbr'),
                     '配当利回り': div_yield,
                 })
@@ -554,7 +554,7 @@ if st.session_state.generation_done:
             # 数値列をfloat型に統一
             _num_cols = ['株価（円）', '時価総額（百万円）', 'EV（百万円）',
                          '売上高LTM（百万円）', '営業利益LTM（百万円）', 'EBITDA LTM（百万円）',
-                         'EV/EBITDA LTM', 'FY PER', '直近四半期PBR', '配当利回り']
+                         'EV/EBITDA LTM', 'Forward PER', '直近四半期PBR', '配当利回り']
             for col in _num_cols:
                 df_summary[col] = pd.to_numeric(df_summary[col], errors='coerce')
 
@@ -571,7 +571,7 @@ if st.session_state.generation_done:
                 '株価（円）': _fmt_int, '時価総額（百万円）': _fmt_int,
                 'EV（百万円）': _fmt_int, '売上高LTM（百万円）': _fmt_int,
                 '営業利益LTM（百万円）': _fmt_int, 'EBITDA LTM（百万円）': _fmt_int,
-                'EV/EBITDA LTM': _fmt_1f_x, 'FY PER': _fmt_1f_x,
+                'EV/EBITDA LTM': _fmt_1f_x, 'Forward PER': _fmt_1f_x,
                 '直近四半期PBR': _fmt_2f_x, '配当利回り': _fmt_pct,
             }
             _right_cols = set(_num_cols)
@@ -596,7 +596,7 @@ if st.session_state.generation_done:
                 '営業利益LTM（百万円）': '営業利益LTM<br><span class="sub">（百万円）</span>',
                 'EBITDA LTM（百万円）': 'EBITDA LTM<br><span class="sub">（百万円）</span>',
                 'EV/EBITDA LTM': 'EV/EBITDA<br><span class="sub">LTM</span>',
-                'FY PER': 'FY PER',
+                'Forward PER': 'Forward PER',
                 '直近四半期PBR': '直近四半期<br><span class="sub">PBR</span>',
                 '配当利回り': '配当利回り',
             }
