@@ -581,13 +581,17 @@ if st.session_state.generation_done:
                 lambda v: f"{v:.1f}%" if pd.notna(v) else "—"
             )
 
-            _col_config = {
-                'コード': st.column_config.TextColumn('コード'),
-                '企業名': st.column_config.TextColumn('企業名'),
-            }
+            # 数値列を右揃え表示
+            _right_align_cols = ['株価（円）', '時価総額（百万円）', 'EV（百万円）',
+                                 '売上高LTM（百万円）', '営業利益LTM（百万円）', 'EBITDA LTM（百万円）',
+                                 'EV/EBITDA LTM', 'FY PER', '直近四半期PBR', '配当利回り']
+            styled = df_summary.style.set_properties(
+                subset=_right_align_cols, **{'text-align': 'right'}
+            ).set_properties(
+                subset=['コード', '企業名'], **{'text-align': 'left'}
+            )
 
-            st.dataframe(df_summary, use_container_width=True, hide_index=True,
-                         column_config=_col_config)
+            st.dataframe(styled, use_container_width=True, hide_index=True)
 
             # --- 決算短信セクション ---
             st.subheader("📄 決算短信")
