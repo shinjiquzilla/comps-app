@@ -172,13 +172,28 @@ if generate_btn:
     elif any(not c.isdigit() or len(c) != 4 for c in codes):
         st.error("証券コードは4桁の数字で入力してください。")
     else:
-        # EDINET API Key チェック（なくても株価取得は可能）
+        # EDINET API Key チェック（全社キャッシュ済みならキー不要）
+        # まず全社のキャッシュ状況を事前チェック
+        _all_edinet_cached = True
+        if use_cache:
+            for _c in codes:
+                _meta = load_cached_meta(_c)
+                if not (_meta and _meta.get("docs") is not None):
+                    _all_edinet_cached = False
+                    break
+        else:
+            _all_edinet_cached = False
+
         edinet_available = False
-        try:
-            load_api_key()
+        if _all_edinet_cached:
+            # 全社キャッシュ済み: APIキー不要、EDINET利用可能扱い
             edinet_available = True
-        except RuntimeError:
-            pass
+        else:
+            try:
+                load_api_key()
+                edinet_available = True
+            except RuntimeError:
+                pass
 
         if not edinet_available:
             st.warning("EDINET API Key が未設定のため、財務データ（P&L/BS）は自動取得できません。株価のみ取得し、その他は手動入力で補完できます。")

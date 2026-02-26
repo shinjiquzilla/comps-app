@@ -543,30 +543,35 @@ def fetch_companies_batch(codes_4, days=90, progress_callback=None, use_cache=Tr
     """
     複数社の財務データを一括取得。EDINET日付検索は1回のみ。
     use_cache=True の場合、ローカルキャッシュを優先し、EDINET APIアクセスを最小化する。
+    全社キャッシュ済みならHTTPセッション作成・APIキー読み込みも行わない。
     Returns: dict {code_4: result_dict}
     """
-    api_key = load_api_key()
-    session = make_session(verify_ssl=False)
-
     results = {}
     codes_to_search = []  # キャッシュにない企業
 
-    # キャッシュ確認
+    # キャッシュ確認（セッション不要で処理）
     if use_cache:
         for code4 in codes_4:
             meta = load_cached_meta(code4)
             if meta and meta.get("docs") is not None:
-                # キャッシュ済み: meta.json の docs を使って処理
+                # キャッシュ済み: session=None で処理（パース済みキャッシュがあればネットワーク不要）
                 docs = meta["docs"]
                 results[code4] = _process_docs_for_company(
-                    session, api_key, code4, docs, use_cache=True
+                    None, None, code4, docs, use_cache=True
                 )
             else:
                 codes_to_search.append(code4)
     else:
         codes_to_search = list(codes_4)
 
-    # キャッシュにない企業のみ EDINET 検索
+    # 全社キャッシュ済みならセッション作成もAPIキー読み込みも不要
+    if not codes_to_search:
+        return results
+
+    # キャッシュにない企業のみ EDINET 検索（ここで初めてセッション作成）
+    api_key = load_api_key()
+    session = make_session(verify_ssl=False)
+
     if codes_to_search:
         sec_codes = {to_sec_code(c): c for c in codes_to_search}
 
@@ -671,6 +676,9 @@ def _process_docs_for_company(session, api_key, code_4, docs, use_cache=True):
                 cache_hit = True
 
         if zip_bytes is None:
+            if session is None or api_key is None:
+                # セッションなし（全社キャッシュモード）でパース結果もZIPもない → スキップ
+                continue
             zip_bytes = download_csv_zip(session, api_key, doc_id)
             time.sleep(1)
             # キャッシュに保存
@@ -711,7 +719,7 @@ def _process_docs_for_company(session, api_key, code_4, docs, use_cache=True):
                         pass
 
         # --- PDF ---
-        if cache_dir:
+        if cache_dir and session is not None and api_key is not None:
             pdf_path = cache_dir / pdf_filename
             if not pdf_path.exists():
                 try:
