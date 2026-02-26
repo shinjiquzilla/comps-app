@@ -189,7 +189,7 @@ def classify_documents(docs):
             hanki.append(doc)
 
     def sort_key(d):
-        return d.get("periodEnd", "")
+        return d.get("periodEnd") or ""
 
     yuho.sort(key=sort_key, reverse=True)
     hanki.sort(key=sort_key, reverse=True)
