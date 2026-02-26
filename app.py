@@ -948,4 +948,4 @@ if st.session_state.generation_done:
 # ---------------------------------------------------------------------------
 
 st.divider()
-st.caption("くじらキャピタル株式会社 | Comps自動生成ツール v1.0")
+st.caption("くじらキャピタル株式会社 | Comps自動生成ツール v1.1 (build 3d33357)")
