@@ -648,19 +648,57 @@ def _process_docs_for_company(session, api_key, code_4, docs, use_cache=True):
             if cache_dir and zip_bytes:
                 (cache_dir / zip_filename).write_bytes(zip_bytes)
 
-        lines = parse_csv_lines(zip_bytes)
         debug_info[f'{doc_type}_zip_size'] = len(zip_bytes)
-        debug_info[f'{doc_type}_csv_lines'] = len(lines)
         debug_info[f'{doc_type}_cache_hit'] = cache_hit
 
-        # 半期報告書の場合: 前期H1データも抽出
-        if doc_type == 'hanki':
-            parsed = extract_financial_data(zip_bytes, include_prior=True)
-            result['hanki_data'] = parsed['current']
-            result['hanki_prior_data'] = parsed['prior']
-            debug_info['hanki_prior_keys'] = list(parsed['prior'].keys())
-        else:
-            result[f'{doc_type}_data'] = extract_financial_data(zip_bytes)
+        # パース結果キャッシュ: ZIP解凍＋CSVパースの結果をJSONで保存
+        parsed_cache_file = cache_dir / f"{doc_type}_parsed.json" if cache_dir else None
+        parsed_from_cache = False
+
+        if parsed_cache_file and parsed_cache_file.exists() and cache_hit:
+            try:
+                import json
+                cached_parsed = json.loads(parsed_cache_file.read_text(encoding='utf-8'))
+                if doc_type == 'hanki':
+                    result['hanki_data'] = cached_parsed.get('current', {})
+                    result['hanki_prior_data'] = cached_parsed.get('prior', {})
+                    debug_info['hanki_prior_keys'] = list(result['hanki_prior_data'].keys())
+                else:
+                    result[f'{doc_type}_data'] = cached_parsed
+                parsed_from_cache = True
+                debug_info[f'{doc_type}_parsed_cache'] = True
+            except Exception:
+                pass
+
+        if not parsed_from_cache:
+            lines = parse_csv_lines(zip_bytes)
+            debug_info[f'{doc_type}_csv_lines'] = len(lines)
+
+            # 半期報告書の場合: 前期H1データも抽出
+            if doc_type == 'hanki':
+                parsed = extract_financial_data(zip_bytes, include_prior=True)
+                result['hanki_data'] = parsed['current']
+                result['hanki_prior_data'] = parsed['prior']
+                debug_info['hanki_prior_keys'] = list(parsed['prior'].keys())
+                # パース結果をキャッシュ保存
+                if parsed_cache_file:
+                    try:
+                        import json
+                        parsed_cache_file.write_text(
+                            json.dumps({'current': parsed['current'], 'prior': parsed['prior']},
+                                       ensure_ascii=False), encoding='utf-8')
+                    except Exception:
+                        pass
+            else:
+                parsed_data = extract_financial_data(zip_bytes)
+                result[f'{doc_type}_data'] = parsed_data
+                if parsed_cache_file:
+                    try:
+                        import json
+                        parsed_cache_file.write_text(
+                            json.dumps(parsed_data, ensure_ascii=False), encoding='utf-8')
+                    except Exception:
+                        pass
 
         # --- PDF ---
         if cache_dir:
