@@ -581,17 +581,23 @@ if st.session_state.generation_done:
                 lambda v: f"{v:.1f}%" if pd.notna(v) else "—"
             )
 
-            # 数値列を右揃え表示
-            _right_align_cols = ['株価（円）', '時価総額（百万円）', 'EV（百万円）',
-                                 '売上高LTM（百万円）', '営業利益LTM（百万円）', 'EBITDA LTM（百万円）',
-                                 'EV/EBITDA LTM', 'FY PER', '直近四半期PBR', '配当利回り']
-            styled = df_summary.style.set_properties(
-                subset=_right_align_cols, **{'text-align': 'right'}
-            ).set_properties(
-                subset=['コード', '企業名'], **{'text-align': 'left'}
-            )
-
-            st.dataframe(styled, use_container_width=True, hide_index=True)
+            # HTMLテーブルで右揃え表示（st.dataframeはtext-align非対応）
+            _right_cols = set(_num_cols)
+            _html = '<table style="width:100%; border-collapse:collapse; font-size:14px;">'
+            _html += '<thead><tr>'
+            for col in df_summary.columns:
+                _align = 'right' if col in _right_cols else 'left'
+                _html += f'<th style="text-align:{_align}; padding:6px 10px; border-bottom:2px solid #ddd; white-space:nowrap;">{col}</th>'
+            _html += '</tr></thead><tbody>'
+            for _, row in df_summary.iterrows():
+                _html += '<tr>'
+                for col in df_summary.columns:
+                    _align = 'right' if col in _right_cols else 'left'
+                    val = row[col] if row[col] != '—' and pd.notna(row[col]) else '—'
+                    _html += f'<td style="text-align:{_align}; padding:5px 10px; border-bottom:1px solid #eee; white-space:nowrap;">{val}</td>'
+                _html += '</tr>'
+            _html += '</tbody></table>'
+            st.markdown(_html, unsafe_allow_html=True)
 
             # --- 決算短信セクション ---
             st.subheader("📄 決算短信")
