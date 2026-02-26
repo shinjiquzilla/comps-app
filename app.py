@@ -35,6 +35,34 @@ from comps_generator import generate_comps
 from tanshin_parser import parse_tanshin_pdf, save_tanshin_pdf, identify_tanshin_pdf
 
 # ---------------------------------------------------------------------------
+# 決算短信 予想値の永続キャッシュ（data/tanshin_forecasts.json）
+# ---------------------------------------------------------------------------
+import json as _json
+from pathlib import Path as _Path
+
+_FORECASTS_FILE = _Path(__file__).parent / "data" / "tanshin_forecasts.json"
+
+
+def _load_forecasts_cache():
+    """永続キャッシュから予想値を読み込む。"""
+    if _FORECASTS_FILE.exists():
+        try:
+            return _json.loads(_FORECASTS_FILE.read_text(encoding='utf-8'))
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_forecasts_cache(forecasts):
+    """予想値を永続キャッシュに保存。"""
+    try:
+        _FORECASTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _FORECASTS_FILE.write_text(
+            _json.dumps(forecasts, ensure_ascii=False, indent=2), encoding='utf-8')
+    except Exception:
+        pass
+
+# ---------------------------------------------------------------------------
 # Page Config
 # ---------------------------------------------------------------------------
 
@@ -127,6 +155,9 @@ if 'company_data' not in st.session_state:
     st.session_state.company_data = []
 if 'generation_done' not in st.session_state:
     st.session_state.generation_done = False
+# 決算短信予想値: 永続キャッシュから復元
+if 'tanshin_forecasts' not in st.session_state:
+    st.session_state.tanshin_forecasts = _load_forecasts_cache()
 if 'errors' not in st.session_state:
     st.session_state.errors = []
 
@@ -431,9 +462,6 @@ if st.session_state.generation_done:
             # --- 決算短信セクション ---
             st.subheader("📄 決算短信")
 
-            if 'tanshin_forecasts' not in st.session_state:
-                st.session_state.tanshin_forecasts = {}
-
             candidate_codes = [c.get('code', '') for c in companies_for_config if c.get('code')]
             code_name_map = {c.get('code', ''): c.get('name', '') for c in companies_for_config}
 
@@ -459,6 +487,7 @@ if st.session_state.generation_done:
                         parsed = parse_tanshin_pdf(pdf_path.read_bytes())
                         if parsed:
                             st.session_state.tanshin_forecasts[code] = parsed
+                            _save_forecasts_cache(st.session_state.tanshin_forecasts)
                             break
 
             # --- Step 2: アップロードファイルの処理（不足チェックの前に実行） ---
@@ -539,6 +568,7 @@ if st.session_state.generation_done:
                         except Exception:
                             pass
                 if _parsed_count:
+                    _save_forecasts_cache(st.session_state.tanshin_forecasts)
                     st.success(f"✅ {_parsed_count}件の業績予想を抽出しました。")
                 for _pf_code, _pf_name, _pf_file, _pf_bytes in _parse_failures:
                     st.warning(
