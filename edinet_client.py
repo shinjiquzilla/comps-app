@@ -174,15 +174,21 @@ def save_meta(code_4, docs, search_days, company_name=""):
 
 
 def clear_cache(code_4=None):
-    """キャッシュ削除。code_4 指定で1社、None で全社。"""
+    """キャッシュ削除（EDINET＋株価）。code_4 指定で1社、None で全社。"""
     import shutil
+    stock_base = CACHE_BASE.parent / "stock"
     if code_4:
         target = CACHE_BASE / str(code_4)
         if target.exists():
             shutil.rmtree(target)
+        stock_target = stock_base / str(code_4)
+        if stock_target.exists():
+            shutil.rmtree(stock_target)
     else:
         if CACHE_BASE.exists():
             shutil.rmtree(CACHE_BASE)
+        if stock_base.exists():
+            shutil.rmtree(stock_base)
 
 
 def to_sec_code(code: str) -> str:

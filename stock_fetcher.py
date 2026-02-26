@@ -4,8 +4,9 @@ Stock Fetcher - yfinance経由で最新株価・時価総額を取得。
 社内ネットワーク対応のSSL検証バイパス付き。
 yfinance が内部で curl_cffi を使うため、環境変数でSSL検証を無効化。
 
-日次キャッシュ: 取得済みの株価データは data/stock/{code_4}/YYYY-MM-DD.json に
-保存し、同日中は再取得しない（前日終値なので日中変わらない）。
+永続キャッシュ: 取得済みの株価データは data/stock/{code_4}/stock.json に保存。
+キャッシュがある限りyfinanceアクセスをスキップ。
+「キャッシュクリア」ボタンで明示的にリフレッシュ。
 """
 
 import json
@@ -63,8 +64,8 @@ _STOCK_CACHE_DIR = Path(__file__).parent / "data" / "stock"
 
 
 def _load_stock_cache(code_4):
-    """今日の日付のキャッシュがあれば読み込む。なければNone。"""
-    cache_file = _STOCK_CACHE_DIR / code_4 / f"{date.today().isoformat()}.json"
+    """キャッシュがあれば読み込む。なければNone。"""
+    cache_file = _STOCK_CACHE_DIR / code_4 / "stock.json"
     if cache_file.exists():
         try:
             return json.loads(cache_file.read_text(encoding='utf-8'))
@@ -74,17 +75,19 @@ def _load_stock_cache(code_4):
 
 
 def _save_stock_cache(code_4, data):
-    """株価データを今日の日付でキャッシュ保存。"""
+    """株価データをキャッシュ保存（取得日も記録）。"""
     cache_dir = _STOCK_CACHE_DIR / code_4
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_file = cache_dir / f"{date.today().isoformat()}.json"
-    cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+    data_with_date = dict(data)
+    data_with_date['_fetched_date'] = date.today().isoformat()
+    cache_file = cache_dir / "stock.json"
+    cache_file.write_text(json.dumps(data_with_date, ensure_ascii=False), encoding='utf-8')
 
 
 def fetch_stock_info(code_4, max_retries=3, use_cache=True):
     """
     証券コード（4桁）から株価情報を取得。
-    同日中はキャッシュから返す（前日終値は日中変わらないため）。
+    キャッシュがある限りyfinanceアクセスをスキップ。
     レート制限時は最大max_retries回リトライ。
 
     Returns: dict with keys:
