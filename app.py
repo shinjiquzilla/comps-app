@@ -414,13 +414,41 @@ if st.session_state.generation_done:
                 for fy_end, ptype in required_periods:
                     expected_set.add((code, fy_end, ptype))
 
+            # --- 保存済みPDFのスキャン ---
+            # data/tanshin/{code}/ に既にあるPDFは「取得済み」として扱う
+            from pathlib import Path
+            _tanshin_base = Path(__file__).parent / "data" / "tanshin"
+            _existing_set = set()  # (code, fy_end, period_type)
+            _existing_files = []   # 表示用
+            for code in candidate_codes:
+                code_dir = _tanshin_base / code
+                if not code_dir.is_dir():
+                    continue
+                for pdf_path in code_dir.glob("tanshin_*.pdf"):
+                    # tanshin_2026-03_FY.pdf → fy_end=2026-03, period_type=FY
+                    parts = pdf_path.stem.split('_')  # ['tanshin', '2026-03', 'FY']
+                    if len(parts) >= 3:
+                        fy_end = parts[1]
+                        ptype = parts[2]
+                        _existing_set.add((code, fy_end, ptype))
+                        _existing_files.append({
+                            '企業': f"{code} {code_name_map.get(code, '')}",
+                            '期間': fy_end.replace('-', '/') + ' ' + {'FY': '通期', 'Q1': 'Q1', 'Q2': 'Q2', 'Q3': 'Q3'}.get(ptype, ptype),
+                            'ファイル': pdf_path.name,
+                        })
+
             if required_periods:
-                _period_labels = [rp.replace('-', '/').replace('FY', '通期') for _, rp_raw in zip(required_periods, required_periods_raw)]
-                st.caption(f"必要書類: {len(candidate_codes)}社 × {len(required_periods)}期間 = **{len(expected_set)}件**")
+                _already_have = expected_set & _existing_set
+                _still_need = expected_set - _existing_set
+                st.caption(f"必要書類: {len(candidate_codes)}社 × {len(required_periods)}期間 = **{len(expected_set)}件**（保存済み: {len(_already_have)}件 / 未取得: {len(_still_need)}件）")
+
+            if _existing_files:
+                with st.expander(f"📁 保存済み決算短信（{len(_existing_files)}件）", expanded=False):
+                    st.dataframe(pd.DataFrame(_existing_files), use_container_width=True, hide_index=True)
 
             # --- ファイルアップロード ---
             uploaded_files = st.file_uploader(
-                "PDFファイルをまとめてアップロード",
+                "PDFファイルをまとめてアップロード（保存済み以外のものをアップロード）",
                 type=['pdf'],
                 accept_multiple_files=True,
                 key="tanshin_bulk",
@@ -439,8 +467,8 @@ if st.session_state.generation_done:
                         'identification': identification,
                     })
 
-                # アップロード済みセット
-                uploaded_set = set()
+                # アップロード済みセット（既存ローカルファイル + 今回アップロード分）
+                uploaded_set = set(_existing_set)
                 for ir in id_results:
                     ident = ir['identification']
                     if ident['code_4'] and ident['fy_end']:
@@ -549,6 +577,25 @@ if st.session_state.generation_done:
                             save_tanshin_pdf(ir['pdf_bytes'], code, save_name)
                         except Exception:
                             pass  # 保存失敗は非致命的
+
+            # --- 保存済みのみで過不足チェック（アップロードなしの場合） ---
+            if not uploaded_files and required_periods:
+                _period_type_ja = {'FY': '通期', 'Q1': 'Q1', 'Q2': 'Q2', 'Q3': 'Q3'}
+                missing = expected_set - _existing_set
+                if not missing:
+                    st.success(f"✅ 全{len(expected_set)}件の決算短信が揃っています。追加アップロードは不要です。")
+                else:
+                    st.warning(f"❌ 不足: {len(missing)}件の決算短信がまだ保存されていません。上のアップローダーからアップロードしてください。")
+                    missing_rows = []
+                    for code, fy_end, ptype in sorted(missing):
+                        fy = fy_end.replace('-', '/')
+                        pt_ja = _period_type_ja.get(ptype, ptype)
+                        missing_rows.append({
+                            '企業': f"{code} {code_name_map.get(code, '')}",
+                            '必要な期間': f"{fy} {pt_ja}",
+                            'ファイル名（期待）': f"tanshin_{fy_end}_{ptype}.pdf",
+                        })
+                    st.dataframe(pd.DataFrame(missing_rows), use_container_width=True, hide_index=True)
 
             # --- 手動補完セクション ---
             st.subheader("手動データ補完")
