@@ -598,7 +598,7 @@ if st.session_state.generation_done:
                 'EV/EBITDA LTM': 'EV/EBITDA<br><span class="sub">LTM</span>',
                 'Forward PER': 'PER<br><span class="sub">Forward</span>',
                 '直近四半期PBR': 'PBR<br><span class="sub">直近四半期末</span>',
-                '配当利回り': '配当利回り',
+                '配当利回り': '配当利回り<br><span class="sub">直近年度末</span>',
             }
 
             # テーブルデータをJSON化（ソート用に生数値も保持）
