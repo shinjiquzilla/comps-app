@@ -104,6 +104,8 @@ Step 0の検証で以下のいずれかがあればyfinance検証をスキップ
 - **経営指標等（SUMMARY_ELEMENT_MAP）**: J-GAAP/IFRS両方の`jpcrp_cor:`要素をフォールバック用に登録。DPS（実績配当）も`DividendPaidPerShareSummaryOfBusinessResults`で取得
 - **12月決算企業対応**: 相対年度フィルタに`当四半期累計期間`/`当四半期会計期間末`/`前年度同四半期累計期間`/`前年度同四半期会計期間末`を追加（2702マクドナルド、3197すかいらーくで確認）
 - **IFRS営業利益**: `OperatingProfitLossIFRS`と`OperatingIncomeLossIFRS`の両方をマッピング（企業によりどちらが使われるか異なる）
+- **IFRS総合商社の営業利益制約**: 三菱商事（8058）等のIFRS総合商社は有報連結P/Lに「営業利益」行がなく（IAS 1ではオプション）、EDINET CSVにも経営指標等サマリーにも連結営業利益が含まれない。手動補完フォームで入力するか決算短信PDFアップロードで対応
+- **IFRS D&A追加マッピング**: `DepreciationExpenseOpeCFIFRS`（三菱商事等のCF計算書上の減価償却費）を追加済み
 - **IFRS有利子負債**: `BondsAndBorrowingsCLIFRS`/`BondsAndBorrowingsNCLIFRS`（借入金＋社債合算）をマッピング
 - **IFRS自己資本比率**: `EquityToAssetRatioIFRSSummaryOfBusinessResults`は実際には「1株当たり親会社所有者帰属持分」を返すため除外。J-GAAP版のみ使用
 - **のれん償却費D&A**: `DepreciationAndAmortizationOfGoodwillOpeCF`をマッピング（2702マクドナルドで確認）
@@ -152,11 +154,10 @@ IFRS企業の`BondsAndBorrowings`（借入金＋社債合算）は`short_term_de
 - 株価・発行済株式数を手入力可能（yfinanceレート制限時の対応）
 - 予想値（進行期末）: 売上高予想・営業利益予想・純利益予想・減価償却費予想・EBITDA予想を入力可能
 - **EBITDA予想の計算ロジック**:
-  - 全ボックス初期値は0（決算短信プリフィルがあればその値）
-  - 「データを反映」押下時に自動計算: `営業利益予想 + D&A`
+  - EBITDA予想は`st.metric`で読み取り専用表示（`st.form`内のwidget更新制約を回避）
+  - 「データを反映」押下時に自動計算: `営業利益予想 + D&A` → session_stateに保存
   - D&A予想が0の場合 → 直近年度末の減価償却費実績で簡便計算
-  - 簡便計算時はEBITDAボックス下に注記表示: 「※ 簡便計算: 営業利益予想 + 直近年度末D&A実績（xxx）」
-  - ユーザーがEBITDAボックスを手動変更→反映すればその値を優先（注記は消える）
+  - 簡便計算時はEBITDA下に注記表示: 「※ 簡便計算: 営業利益予想 + 直近年度末D&A実績（xxx）」
 - 手動入力した予想値はSupabase `tanshin_forecasts`テーブルに自動保存
 - 入力値から時価総額・EV・EV/EBITDA・PER・PBRをリアルタイム自動計算（st.metric表示）
 - 金額は整数表示（百万円）、DPSは小数1桁（円・有報実績）
@@ -229,7 +230,9 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supaba
 - **`st.rerun()` は使わない**: Cloud環境ではst.rerun()がsession state消失を引き起こす場合がある。生成後の結果表示はsession stateフラグ（generation_done）で制御
 - **session stateの肥大化に注意**: 大データをsession stateに入れるとメモリ圧迫→アプリ再起動→session state消失のリスク
 - **結果表示セクションはtry-exceptでラップ**: エラー時にサイレントに元の画面に戻る問題を防止
-- **EDINET API Key**: Cloud上では`st.secrets`の`edinet.api_key`で設定。未設定の場合はスキップされ株価のみ取得。`st.secrets`アクセスはtry-exceptで囲むこと
+- **EDINET API Key**: Cloud上では`st.secrets`の`edinet.api_key`で設定。Supabase `app_config`テーブルからのフォールバック読み込みあり。未設定の場合はスキップされ株価のみ取得。`st.secrets`アクセスはtry-exceptで囲むこと
+- **Python 3.13互換性**: Streamlit Cloudは3.13を使用。f-string内のネストクォート（`f'{s["key"]}'`）は3.14では動作するが3.13ではSyntaxError。str連結を使用すること
+- **print()はCloud上で非表示**: Streamlit Cloudのダウンロード可能ログにprint()出力は出ない。デバッグには`st.caption`/`st.warning`を使用
 - **EDINET一括検索**: `fetch_companies_batch()`で全社まとめて1回の日付ループ。N社×日数→1×日数に削減
 - **デフォルト検索期間400日**: 有報は決算後3ヶ月（3月決算→6月提出）、半期報も同様
 - **sys.stdout書き換え禁止**: モジュールのトップレベルで`sys.stdout`を書き換えるとStreamlitのIO破壊でクラッシュ。`if __name__ == '__main__':`ガード必須
@@ -240,6 +243,12 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supaba
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
+| 2026/2/27 | 9555d29 | IFRS D&A: DepreciationExpenseOpeCFIFRS追加（三菱商事等の総合商社対応） |
+| 2026/2/27 | — | EBITDA予想をst.metric表示に変更（st.form内widget更新制約の回避） |
+| 2026/2/27 | — | Comps再生成時にsession_stateのフォーム関連キーをクリア（前回値のリーク防止） |
+| 2026/2/27 | — | キャッシュクリア時にSupabaseデータも削除 |
+| 2026/2/27 | — | EDINET API KeyのSupabase app_config フォールバック読み込み |
+| 2026/2/27 | — | デバッグ出力: 未マッチ要素のexpander表示（営業利益・D&A関連） |
 | 2026/2/27 | 917ca76 | キャプション文言修正: 「自動作成」→「自動生成」 |
 | 2026/2/27 | bf76e43 | 決算短信アップロードUX改善: 確認中メッセージ表示、再生成ボタン配置改善 |
 | 2026/2/27 | 112eee6 | 生成ボタン押下直後に「Comps生成を開始しています...」を表示 |
@@ -291,3 +300,4 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supaba
 - Streamlit CloudのNumberColumn formatが効かない→JS付きHTMLテーブルで回避済み
 - IFRS企業のリース負債（`OtherFinancialLiabilities`）は`BondsAndBorrowings`と分離されている場合があり、現状はBondsAndBorrowingsのみ計上。すかいらーく等のIFRS16リース負債は含まれていない可能性がある
 - 2702（マクドナルド）・3197（すかいらーく）は12月決算。Forward PER用の決算短信（Q3）が未アップロード
+- IFRS総合商社（8058三菱商事等）はEDINET CSVに連結営業利益が含まれない → 手動入力 or 決算短信PDF必須
