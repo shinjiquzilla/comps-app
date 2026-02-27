@@ -1271,9 +1271,13 @@ render();
                             _code_for_ebitda = company.get('code', '')
                             _ebitda_e_saved = st.session_state.get('_ebitda_calc', {}).get(_code_for_ebitda, 0)
                             _ebitda_e_default = int(company.get('ebitda_forecast') or _ebitda_e_saved or 0)
+                            # 計算済みEBITDAがある場合、ウィジェットの値を事前に更新
+                            _ebitda_widget_key = f"ebitdae_{idx}"
+                            if _ebitda_e_saved > 0:
+                                st.session_state[_ebitda_widget_key] = _ebitda_e_saved
                             ebitda_e = st.number_input("EBITDA予想",
                                 value=_ebitda_e_default,
-                                key=f"ebitdae_{idx}", step=1, format="%d")
+                                key=_ebitda_widget_key, step=1, format="%d")
                             # 簡便計算の注記（D&Aが0で直近年度末実績を使った場合）
                             _ebitda_is_approx = st.session_state.get('_ebitda_approx', {}).get(_code_for_ebitda, False)
                             if _ebitda_is_approx and ebitda_e > 0:
@@ -1322,7 +1326,9 @@ render();
                         edited['op_forecast'] = op_e if op_e != 0 else None
                         edited['ni_forecast'] = ni_e if ni_e != 0 else None
                         edited['da_forecast'] = da_e if da_e != 0 else None
-                        edited['ebitda_forecast'] = ebitda_e if ebitda_e != 0 else None
+                        # EBITDA予想: ウィジェット値 → session_state計算値 → None
+                        _ebitda_fallback = st.session_state.get('_ebitda_calc', {}).get(company.get('code', ''), 0)
+                        edited['ebitda_forecast'] = ebitda_e if ebitda_e != 0 else (_ebitda_fallback if _ebitda_fallback > 0 else None)
                         edited.pop('_ev', None)
                         edited.pop('_multiples', None)
                         edited_companies.append(edited)
