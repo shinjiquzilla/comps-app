@@ -1306,48 +1306,57 @@ render();
 
             # フォーム送信時: EBITDA自動計算 + 予想値をSupabase + session_stateに保存
             if _form_submitted:
-                _reflect_status = st.status("データを反映中...", expanded=False)
-                # EBITDA予想を自動計算: 営業利益予想 + D&A（予想 or 直近年度末実績）
-                if '_ebitda_calc' not in st.session_state:
-                    st.session_state._ebitda_calc = {}
-                for ec in edited_companies:
-                    _code = ec.get('code', '')
-                    _op = ec.get('op_forecast') or 0
-                    _da = ec.get('da_forecast') or 0
-                    _da_actual = int(ec.get('da_ltm') or 0)
-                    _da_use = _da if _da != 0 else _da_actual
-                    _ebitda_calc = (_op + _da_use) if _op and _da_use else 0
-                    if _code and _ebitda_calc > 0:
-                        st.session_state._ebitda_calc[_code] = _ebitda_calc
-                        ec['ebitda_forecast'] = _ebitda_calc
-                if _HAS_SUPABASE:
+                st.toast("データを反映中...", icon="⏳")
+                with st.spinner("データを反映中..."):
+                    # EBITDA予想を自動計算: 営業利益予想 + D&A（予想 or 直近年度末実績）
+                    # ただしユーザーが手動でEBITDAを変更した場合はそちらを優先
+                    if '_ebitda_calc' not in st.session_state:
+                        st.session_state._ebitda_calc = {}
                     for ec in edited_companies:
                         _code = ec.get('code', '')
-                        _ni_e = ec.get('ni_forecast')
-                        _rev_e = ec.get('rev_forecast')
-                        _op_e = ec.get('op_forecast')
-                        if _code and (_ni_e or _rev_e or _op_e):
-                            _fc = {
-                                'ni_forecast': _ni_e,
-                                'rev_forecast': _rev_e,
-                                'op_forecast': _op_e,
-                            }
-                            # session_stateに既存のfy_month/period_typeがあれば引き継ぐ
-                            _existing = st.session_state.get('tanshin_forecasts', {}).get(_code, {})
-                            _fc['fy_month'] = _existing.get('fy_month', 'unknown')
-                            _fc['period_type'] = _existing.get('period_type', 'manual')
-                            # session_stateに保存
-                            if 'tanshin_forecasts' not in st.session_state:
-                                st.session_state.tanshin_forecasts = {}
-                            st.session_state.tanshin_forecasts[_code] = _fc
-                            # Supabase + ローカルJSONに保存
-                            try:
-                                save_forecast(_code, _fc)
-                            except Exception:
-                                pass
-                    _save_forecasts_cache(st.session_state.get('tanshin_forecasts', {}))
-                _reflect_status.update(label="データを反映しました。", state="complete")
-                st.success("予想値をデータベースに保存しました。")
+                        _op = ec.get('op_forecast') or 0
+                        _da = ec.get('da_forecast') or 0
+                        _da_actual = int(ec.get('da_ltm') or 0)
+                        _da_use = _da if _da != 0 else _da_actual
+                        _ebitda_calc = (_op + _da_use) if _op and _da_use else 0
+                        _ebitda_manual = ec.get('ebitda_forecast') or 0
+                        # 手動入力値と自動計算値が異なる場合、手動値を尊重
+                        _ebitda_prev = st.session_state._ebitda_calc.get(_code, 0)
+                        if _ebitda_manual and _ebitda_manual != _ebitda_prev and _ebitda_manual != _ebitda_calc:
+                            # ユーザーが手動でEBITDAを変更した
+                            _ebitda_final = _ebitda_manual
+                        else:
+                            _ebitda_final = _ebitda_calc
+                        if _code and _ebitda_final > 0:
+                            st.session_state._ebitda_calc[_code] = _ebitda_final
+                            ec['ebitda_forecast'] = _ebitda_final
+                    if _HAS_SUPABASE:
+                        for ec in edited_companies:
+                            _code = ec.get('code', '')
+                            _ni_e = ec.get('ni_forecast')
+                            _rev_e = ec.get('rev_forecast')
+                            _op_e = ec.get('op_forecast')
+                            if _code and (_ni_e or _rev_e or _op_e):
+                                _fc = {
+                                    'ni_forecast': _ni_e,
+                                    'rev_forecast': _rev_e,
+                                    'op_forecast': _op_e,
+                                }
+                                # session_stateに既存のfy_month/period_typeがあれば引き継ぐ
+                                _existing = st.session_state.get('tanshin_forecasts', {}).get(_code, {})
+                                _fc['fy_month'] = _existing.get('fy_month', 'unknown')
+                                _fc['period_type'] = _existing.get('period_type', 'manual')
+                                # session_stateに保存
+                                if 'tanshin_forecasts' not in st.session_state:
+                                    st.session_state.tanshin_forecasts = {}
+                                st.session_state.tanshin_forecasts[_code] = _fc
+                                # Supabase + ローカルJSONに保存
+                                try:
+                                    save_forecast(_code, _fc)
+                                except Exception:
+                                    pass
+                        _save_forecasts_cache(st.session_state.get('tanshin_forecasts', {}))
+                st.success("データを反映しました。予想値をデータベースに保存しました。")
 
             # --- Excel生成 ---
             st.divider()
