@@ -1,7 +1,7 @@
 """
 Comps自動生成 Streamlit アプリ
 ==============================
-証券コードを入力するだけで Comparable Company Analysis 表を自動生成。
+証券コードを入力するだけで Comps 表を自動生成。
 
 データソース:
 - EDINET API type=5 CSV: 有報・半期報告書の財務データ
@@ -29,7 +29,7 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from edinet_client import fetch_company_financials, fetch_companies_batch, load_api_key, clear_cache, load_cached_meta
-from stock_fetcher import fetch_stock_info, validate_stock_code
+from stock_fetcher import fetch_stock_info, validate_stock_code, _load_stock_cache
 from financial_calc import build_company_data
 from comps_generator import generate_comps
 from tanshin_parser import parse_tanshin_pdf, save_tanshin_pdf, identify_tanshin_pdf
@@ -72,8 +72,90 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("📊 Comps（比較会社分析）自動生成ツール")
-st.caption("証券コードを入力して「生成」ボタンを押すだけで、Comps表を自動作成します。")
+st.markdown("""
+<div style="display:flex; align-items:center; gap:12px; margin-bottom:4px;">
+  <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+    <rect x="2" y="18" width="6" height="16" rx="1.5" fill="#45b5e6"/>
+    <rect x="11" y="10" width="6" height="24" rx="1.5" fill="#45b5e6" opacity="0.75"/>
+    <rect x="20" y="14" width="6" height="20" rx="1.5" fill="#45b5e6" opacity="0.55"/>
+    <rect x="29" y="6" width="6" height="28" rx="1.5" fill="#45b5e6" opacity="0.85"/>
+  </svg>
+  <span style="font-size:2rem; font-weight:700; color:#333333;">類似上場企業比較分析（Comps）自動生成ツール</span>
+</div>
+""", unsafe_allow_html=True)
+st.caption("証券コードを入力して「生成」ボタンを押すだけで、Compsを自動作成します。")
+
+# ---------------------------------------------------------------------------
+# Custom CSS: ダークテーマ統一
+# ---------------------------------------------------------------------------
+st.markdown("""
+<style>
+/* number_input を右寄せ */
+[data-testid="stNumberInput"] input {
+    text-align: right !important;
+}
+/* placeholder色を薄い灰色に */
+input::placeholder,
+[data-testid="stTextInput"] input::placeholder {
+    color: #999 !important;
+    opacity: 1 !important;
+}
+/* タブのスタイル */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0px;
+    border-bottom: 2px solid #e0e0e0;
+}
+.stTabs [data-baseweb="tab"] {
+    padding: 10px 24px;
+    font-size: 15px;
+    font-weight: 500;
+    color: #999;
+    border-bottom: 2px solid transparent;
+}
+.stTabs [aria-selected="true"] {
+    color: #45b5e6 !important;
+    border-bottom: 2px solid #45b5e6 !important;
+    background-color: rgba(69, 181, 230, 0.05);
+}
+/* ボタンの高さをテキスト入力欄に揃える */
+[data-testid="stHorizontalBlock"] [data-testid="stButton"] {
+    margin-top: 25px;
+}
+/* ボタンのシアンホバー */
+.stButton > button[kind="primary"] {
+    background-color: #45b5e6;
+    border-color: #45b5e6;
+}
+.stButton > button[kind="primary"]:hover {
+    background-color: #3a9cc4;
+    border-color: #3a9cc4;
+}
+/* 入力フォーム */
+input, textarea, select,
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextArea"] textarea,
+[data-testid="stSelectbox"] [data-baseweb="select"],
+[data-baseweb="input"],
+[data-baseweb="textarea"],
+[data-baseweb="select"] {
+    background-color: #ffffff !important;
+    color: #333 !important;
+}
+/* caption色 */
+.stCaption, [data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] p,
+[data-testid="stCaptionContainer"] span,
+.stCaption p, .stCaption span,
+.stMarkdown small, small {
+    color: #666 !important;
+}
+/* サブヘッダー色 */
+h2, h3 {
+    color: #333 !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Sidebar: Settings
@@ -115,8 +197,8 @@ with st.sidebar:
 
     st.markdown("""
     **データソース:**
-    - 📄 EDINET API (有報・半期報)
-    - 📈 yfinance (株価)
+    - EDINET API (有報・半期報)
+    - yfinance (株価)
     """)
 
 # ---------------------------------------------------------------------------
@@ -127,15 +209,13 @@ col1, col2 = st.columns([3, 1])
 
 with col1:
     codes_input = st.text_input(
-        "証券コード（カンマ区切り）",
+        "証券コード（カンマ区切り、スペースなし）",
         value="",
         placeholder="例: 6763,6989,6768,6779",
     )
 
 with col2:
-    st.write("")  # spacer
-    st.write("")
-    generate_btn = st.button("🚀 Comps表を生成", type="primary", use_container_width=True)
+    generate_btn = st.button("▶ Compsを生成", type="primary", use_container_width=True)
 
 # --- 入力フォーマット即時検証 ---
 _input_codes_raw = [c.strip() for c in codes_input.split(",") if c.strip()]
@@ -336,7 +416,7 @@ if generate_btn:
             progress_text = st.empty()
 
             # Step 0: 証券コード存在チェック
-            status_container.info("🔍 証券コードを検証中...")
+            status_container.info("● 証券コードを検証中...")
             invalid_codes = []
             valid_codes = []
             _need_yf_check = []
@@ -347,7 +427,7 @@ if generate_btn:
                     _need_yf_check.append(vc)
 
             for vi, vc in enumerate(_need_yf_check):
-                progress_text.text(f"  🔍 {vc}: yfinanceで検証中... ({vi+1}/{len(_need_yf_check)})")
+                progress_text.text(f"  ● {vc}: yfinanceで検証中... ({vi+1}/{len(_need_yf_check)})")
                 progress_bar.progress((vi + 1) / len(_need_yf_check) * 0.1 if _need_yf_check else 0.1)
                 is_valid, msg = validate_stock_code(vc)
                 if is_valid:
@@ -389,15 +469,15 @@ if generate_btn:
                     uncached_codes = list(codes)
 
                 if cached_codes and not uncached_codes:
-                    status_container.info(f"📄 EDINET: {len(cached_codes)}社すべてキャッシュから読み込み")
+                    status_container.info(f"◆ EDINET: {len(cached_codes)}社すべてキャッシュから読み込み")
                 elif cached_codes:
-                    status_container.info(f"📄 EDINET: {len(cached_codes)}社はキャッシュから読み込み、{len(uncached_codes)}社をAPI検索中...")
+                    status_container.info(f"◆ EDINET: {len(cached_codes)}社はキャッシュから読み込み、{len(uncached_codes)}社をAPI検索中...")
                 else:
-                    status_container.info(f"📄 EDINET: {len(codes)}社分を一括検索中（{search_days}日間）...")
+                    status_container.info(f"◆ EDINET: {len(codes)}社分を一括検索中（{search_days}日間）...")
 
                 def edinet_progress(current, total):
                     progress_bar.progress(0.1 + current / total * 0.55)
-                    progress_text.text(f"  📄 EDINET検索: {current}/{total}日")
+                    progress_text.text(f"  ◆ EDINET検索: {current}/{total}日")
 
                 try:
                     edinet_results = fetch_companies_batch(
@@ -431,11 +511,11 @@ if generate_btn:
                 progress_bar.progress(min(base_progress, 0.95))
                 _stock_cached = use_cache and _load_stock_cache(code) is not None
                 if _stock_cached:
-                    status_container.info(f"📈 株価: {code} キャッシュから読み込み ({i+1}/{len(codes)})")
-                    progress_text.text(f"  📈 {code}: キャッシュ読み込み...")
+                    status_container.info(f"◇ 株価: {code} キャッシュから読み込み ({i+1}/{len(codes)})")
+                    progress_text.text(f"  ◇ {code}: キャッシュ読み込み...")
                 else:
-                    status_container.info(f"📈 株価: {code} ({i+1}/{len(codes)})")
-                    progress_text.text(f"  📈 {code}: yfinanceから取得中...")
+                    status_container.info(f"◇ 株価: {code} ({i+1}/{len(codes)})")
+                    progress_text.text(f"  ◇ {code}: yfinanceから取得中...")
                 stock_data = {'stock_price': None, 'shares_outstanding': None, 'market_cap': None}
                 try:
                     stock_data = fetch_stock_info(code, use_cache=use_cache)
@@ -443,7 +523,7 @@ if generate_btn:
                 except Exception as e:
                     result['errors'].append(f"株価: {e}")
 
-                progress_text.text(f"  🔢 {code}: 計算中...")
+                progress_text.text(f"  ⟐ {code}: 計算中...")
                 try:
                     company = build_company_data(code, edinet_data, tdnet_data, stock_data)
                     if not company.get('name') and stock_data.get('company_name_en'):
@@ -460,7 +540,7 @@ if generate_btn:
                 results.append(result)
 
                 if not _stock_cached and i < len(codes) - 1:
-                    progress_text.text("  ⏳ レート制限回避のため待機中...")
+                    progress_text.text("  ◌レート制限回避のため待機中...")
                     time.sleep(3)
 
             progress_bar.progress(1.0)
@@ -485,7 +565,7 @@ if st.session_state.generation_done:
                     st.warning(err)
 
         # デバッグ情報
-        with st.expander("🔍 デバッグ: 取得データ詳細", expanded=False):
+        with st.expander("● デバッグ: 取得データ詳細", expanded=False):
             for r in st.session_state.company_data:
                 code = r.get('code', '?')
                 st.markdown(f"**{code}** (status: {r.get('status', '?')})")
@@ -514,6 +594,35 @@ if st.session_state.generation_done:
                 companies_for_config.append(r['data'])
 
         if companies_for_config:
+            # --- 決算短信データ処理（サマリーテーブルより先に実行） ---
+            candidate_codes = [c.get('code', '') for c in companies_for_config if c.get('code')]
+            code_name_map = {c.get('code', ''): c.get('name', '') for c in companies_for_config}
+
+            from pathlib import Path
+            _tanshin_base = Path(__file__).parent / "data" / "tanshin"
+            _existing_files = []
+            for code in candidate_codes:
+                code_dir = _tanshin_base / code
+                if not code_dir.is_dir():
+                    continue
+                for pdf_path in sorted(code_dir.glob("tanshin_*.pdf"), reverse=True):
+                    parts = pdf_path.stem.split('_')
+                    if len(parts) >= 3:
+                        _ptype_ja = {'FY': '通期', 'Q1': 'Q1', 'Q2': 'Q2', 'Q3': 'Q3'}
+                        _existing_files.append({
+                            '企業': f"{code} {code_name_map.get(code, '')}",
+                            '期間': parts[1].replace('-', '/') + ' ' + _ptype_ja.get(parts[2], parts[2]),
+                            'ファイル': pdf_path.name,
+                        })
+                if code not in st.session_state.tanshin_forecasts:
+                    for pdf_path in sorted(code_dir.glob("tanshin_*.pdf"), reverse=True):
+                        parsed = parse_tanshin_pdf(pdf_path.read_bytes())
+                        if parsed:
+                            st.session_state.tanshin_forecasts[code] = parsed
+                            _save_forecasts_cache(st.session_state.tanshin_forecasts)
+                            break
+
+            # --- サマリーテーブル ---
             st.subheader("取得データ一覧")
 
             summary_rows = []
@@ -534,8 +643,15 @@ if st.session_state.generation_done:
                     _cash = c.get('cash') or 0
                     _debt = c.get('total_debt') or 0
                     ev = mcap + _debt - _cash
+                # 決算期ラベル: "3月" 等
+                _fy = c.get('fy_end', '')
+                _fy_month_map = {'Mar': '3月', 'Jun': '6月', 'Sep': '9月', 'Dec': '12月',
+                                 'Jan': '1月', 'Feb': '2月', 'Apr': '4月', 'May': '5月',
+                                 'Jul': '7月', 'Aug': '8月', 'Oct': '10月', 'Nov': '11月'}
+                _fy_display = _fy_month_map.get(_fy, _fy) if _fy else '—'
                 summary_rows.append({
                     'コード': c.get('code', ''),
+                    '決算月': _fy_display,
                     '企業名': c.get('name', ''),
                     '株価（円）': int(stock_px) if stock_px else None,
                     '時価総額（百万円）': mcap,
@@ -588,6 +704,7 @@ if st.session_state.generation_done:
             # 列ヘッダー表示名（2行目に単位・日付を折り返し）
             _col_display = {
                 'コード': 'コード',
+                '決算月': '決算月',
                 '企業名': '企業名',
                 '株価（円）': f'株価（円）<br><span class="sub">{_stock_date}</span>' if _stock_date else '株価<br><span class="sub">（円）</span>',
                 '時価総額（百万円）': '時価総額<br><span class="sub">（百万円）</span>',
@@ -624,21 +741,21 @@ if st.session_state.generation_done:
             import streamlit.components.v1 as components
             components.html(f"""
 <style>
-  body {{ margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size:14px; }}
+  body {{ margin:0; background:transparent; color:#333; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size:14px; }}
   .table-wrap {{ overflow-x:auto; width:100%; }}
   .table-wrap::-webkit-scrollbar {{ height:10px; }}
   .table-wrap::-webkit-scrollbar-track {{ background:#f0f0f0; border-radius:5px; }}
-  .table-wrap::-webkit-scrollbar-thumb {{ background:#aaa; border-radius:5px; }}
-  .table-wrap::-webkit-scrollbar-thumb:hover {{ background:#888; }}
-  .table-wrap {{ scrollbar-width:auto; scrollbar-color:#aaa #f0f0f0; }}
+  .table-wrap::-webkit-scrollbar-thumb {{ background:#45b5e6; border-radius:5px; }}
+  .table-wrap::-webkit-scrollbar-thumb:hover {{ background:#3a9cc4; }}
+  .table-wrap {{ scrollbar-width:auto; scrollbar-color:#45b5e6 #f0f0f0; }}
   table {{ border-collapse:collapse; min-width:100%; }}
-  th {{ padding:8px 12px; border-bottom:2px solid #ddd; cursor:pointer; user-select:none; background:#fafafa; position:sticky; top:0; vertical-align:bottom; line-height:1.4; }}
-  th:hover {{ background:#f0f0f0; }}
-  td {{ padding:6px 12px; border-bottom:1px solid #eee; white-space:nowrap; }}
-  tr:hover {{ background:#f8f8ff; }}
-  .sort-arrow {{ font-size:10px; margin-left:4px; color:#999; }}
-  .sort-arrow.active {{ color:#333; }}
-  .sub {{ font-size:11px; color:#888; font-weight:normal; }}
+  th {{ padding:8px 12px; border-bottom:2px solid #45b5e6; cursor:pointer; user-select:none; background:#f5f7fa; color:#45b5e6; position:sticky; top:0; vertical-align:bottom; line-height:1.4; }}
+  th:hover {{ background:#eaf6fc; }}
+  td {{ padding:6px 12px; border-bottom:1px solid #e8e8e8; white-space:nowrap; color:#333; }}
+  tr:hover {{ background:#f0f8ff; }}
+  .sort-arrow {{ font-size:10px; margin-left:4px; color:#ccc; }}
+  .sort-arrow.active {{ color:#45b5e6; }}
+  .sub {{ font-size:11px; color:#2a8ab5; font-weight:normal; }}
 </style>
 <div class="table-wrap">
 <table id="comps-table">
@@ -707,35 +824,7 @@ render();
 """, height=_table_height)
 
             # --- 決算短信セクション ---
-            st.subheader("📄 決算短信")
-
-            candidate_codes = [c.get('code', '') for c in companies_for_config if c.get('code')]
-            code_name_map = {c.get('code', ''): c.get('name', '') for c in companies_for_config}
-
-            # --- Step 1: 保存済みPDFの自動パース ---
-            from pathlib import Path
-            _tanshin_base = Path(__file__).parent / "data" / "tanshin"
-            _existing_files = []
-            for code in candidate_codes:
-                code_dir = _tanshin_base / code
-                if not code_dir.is_dir():
-                    continue
-                for pdf_path in sorted(code_dir.glob("tanshin_*.pdf"), reverse=True):
-                    parts = pdf_path.stem.split('_')
-                    if len(parts) >= 3:
-                        _ptype_ja = {'FY': '通期', 'Q1': 'Q1', 'Q2': 'Q2', 'Q3': 'Q3'}
-                        _existing_files.append({
-                            '企業': f"{code} {code_name_map.get(code, '')}",
-                            '期間': parts[1].replace('-', '/') + ' ' + _ptype_ja.get(parts[2], parts[2]),
-                            'ファイル': pdf_path.name,
-                        })
-                if code not in st.session_state.tanshin_forecasts:
-                    for pdf_path in sorted(code_dir.glob("tanshin_*.pdf"), reverse=True):
-                        parsed = parse_tanshin_pdf(pdf_path.read_bytes())
-                        if parsed:
-                            st.session_state.tanshin_forecasts[code] = parsed
-                            _save_forecasts_cache(st.session_state.tanshin_forecasts)
-                            break
+            st.subheader("◆ 決算短信")
 
             # --- Step 2: アップロードファイルの処理（不足チェックの前に実行） ---
             uploaded_files = st.file_uploader(
@@ -830,7 +919,7 @@ render();
                         for _pg in range(min(3, len(doc))):
                             _debug_text += doc[_pg].get_text() + "\n"
                         doc.close()
-                        with st.expander(f"🔍 デバッグ: {_pf_file} のテキスト（先頭2000文字）"):
+                        with st.expander(f"● デバッグ: {_pf_file} のテキスト（先頭2000文字）"):
                             st.text(_debug_text[:2000])
                     except Exception:
                         pass
@@ -845,8 +934,10 @@ render();
                 tanshin = st.session_state.get('tanshin_forecasts', {}).get(code, {})
                 ni_forecast = tanshin.get('ni_forecast') or comp.get('ni_forecast')
 
-                # 決算期を特定: EDINETの半期報periodEndから推定
+                # 決算期を特定: EDINETの半期報periodEndから決算月を取得
                 _fy_label = ""
+                _fy_end_month = None  # 決算月（1-12）
+                _fy_end_year = None
                 for r in st.session_state.company_data:
                     if r.get('code') == code and r.get('edinet_raw'):
                         hd = r['edinet_raw'].get('hanki_doc')
@@ -855,21 +946,40 @@ render();
                             pe_clean = pe.replace('/', '-')
                             parts = pe_clean.split('-')
                             if len(parts) >= 2:
-                                _fy_label = f"{parts[0]}年{int(parts[1])}月期"
+                                _fy_end_year = int(parts[0])
+                                _fy_end_month = int(parts[1])
+                                _fy_label = f"{parts[0]}年{_fy_end_month}月期"
                         break
 
-                # 最新の四半期を推定（決算月と現在日付から）
+                # 最新の決算短信を推定（決算月と現在日付から）
+                # 年度末から3ヶ月以内なら通期決算短信を要求
                 _quarter_hint = ""
-                if _fy_label:
-                    month = datetime.today().month
-                    if month in (1, 2, 3):
-                        _quarter_hint = "第3四半期"
-                    elif month in (4, 5):
+                if _fy_end_month is not None:
+                    today = datetime.today()
+                    # 直近の年度末日を算出
+                    fy_end_year = today.year if today.month > _fy_end_month else today.year - 1
+                    if today.month == _fy_end_month and today.day <= 28:
+                        fy_end_year = today.year - 1
+                    from datetime import date
+                    import calendar
+                    _last_day = calendar.monthrange(fy_end_year, _fy_end_month)[1]
+                    fy_end_date = date(fy_end_year, _fy_end_month, _last_day)
+                    days_since_fy_end = (today.date() - fy_end_date).days
+
+                    if 0 <= days_since_fy_end <= 92:
+                        # 年度末から約3ヶ月以内 → 通期決算短信を要求
                         _quarter_hint = "通期"
-                    elif month in (6, 7, 8):
-                        _quarter_hint = "第1四半期"
+                        _fy_label = f"{fy_end_year}年{_fy_end_month}月期"
                     else:
-                        _quarter_hint = "第2四半期"
+                        # 年度末から3ヶ月超 → 経過月数から四半期を推定
+                        months_since = (today.year - fy_end_year) * 12 + (today.month - _fy_end_month)
+                        if months_since <= 6:
+                            _quarter_hint = "第1四半期"
+                        elif months_since <= 9:
+                            _quarter_hint = "第2四半期"
+                        else:
+                            _quarter_hint = "第3四半期"
+                        _fy_label = f"{fy_end_year + 1}年{_fy_end_month}月期"
 
                 suggestion = _fy_label
                 if _quarter_hint:
@@ -896,15 +1006,14 @@ render();
                 st.success(f"✅ 全{len(candidate_codes)}社の業績予想データが揃っています。")
 
             if _existing_files:
-                with st.expander(f"📁 保存済み決算短信（{len(_existing_files)}件）", expanded=False):
+                with st.expander(f"▸ 保存済み決算短信（{len(_existing_files)}件）", expanded=False):
                     st.dataframe(pd.DataFrame(_existing_files), use_container_width=True, hide_index=True)
 
             # --- 手動補完セクション ---
             st.subheader("手動データ補完")
-            st.caption("自動取得できなかった項目を手動で入力・修正できます。金額単位: 百万円 / DPS: 円")
 
             edited_companies = []
-            tabs = st.tabs([f"{c.get('code', '')} {c.get('name', '')}" for c in companies_for_config])
+            tabs = st.tabs([f"  {c.get('code', '')}  {c.get('name', '')}  " for c in companies_for_config])
 
             for idx, (tab, company) in enumerate(zip(tabs, companies_for_config)):
                 with tab:
@@ -912,11 +1021,14 @@ render();
                     with col1:
                         st.markdown("**基本情報**")
                         name = st.text_input("企業名", value=company.get('name', ''), key=f"name_{idx}")
-                        sector = st.text_input("セクター", value=company.get('sector', ''), key=f"sector_{idx}")
                         accounting = st.selectbox("会計基準",
                                                   ["J-GAAP", "IFRS", "US-GAAP"],
                                                   index=0, key=f"acc_{idx}")
-                        fy_end = st.text_input("決算月", value=company.get('fy_end', 'Mar'), key=f"fy_{idx}")
+                        _fy_raw = company.get('fy_end', 'Mar')
+                        _fy_month_display = {'Mar': '3月', 'Jun': '6月', 'Sep': '9月', 'Dec': '12月',
+                                             'Jan': '1月', 'Feb': '2月', 'Apr': '4月', 'May': '5月',
+                                             'Jul': '7月', 'Aug': '8月', 'Oct': '10月', 'Nov': '11月'}
+                        fy_end = st.text_input("決算月", value=_fy_month_display.get(_fy_raw, _fy_raw), key=f"fy_{idx}")
                         st.markdown("**株価・株式**")
                         stock_price = st.number_input("株価（円）", value=float(company.get('stock_price') or 0),
                                                       key=f"price_{idx}", step=1.0, format="%.0f")
@@ -924,16 +1036,16 @@ render();
                                                  key=f"shares_{idx}", step=1, format="%d")
 
                     with col2:
-                        st.markdown("**P&L - LTM（百万円）**")
-                        rev = st.number_input("売上高（百万円）", value=int(company.get('rev_ltm') or 0),
+                        st.markdown("**P&L - LTM**")
+                        rev = st.number_input("売上高", value=int(company.get('rev_ltm') or 0),
                                               key=f"rev_{idx}", step=1, format="%d")
-                        op = st.number_input("営業利益（百万円）", value=int(company.get('op_ltm') or 0),
+                        op = st.number_input("営業利益", value=int(company.get('op_ltm') or 0),
                                              key=f"op_{idx}", step=1, format="%d")
-                        ni = st.number_input("純利益（百万円）", value=int(company.get('ni_ltm') or 0),
+                        ni = st.number_input("純利益", value=int(company.get('ni_ltm') or 0),
                                              key=f"ni_{idx}", step=1, format="%d")
-                        da = st.number_input("減価償却費（百万円）", value=int(company.get('da_ltm') or 0),
+                        da = st.number_input("減価償却費", value=int(company.get('da_ltm') or 0),
                                              key=f"da_{idx}", step=1, format="%d")
-                        ebitda = st.number_input("EBITDA（百万円）", value=int(company.get('ebitda_ltm') or 0),
+                        ebitda = st.number_input("EBITDA", value=int(company.get('ebitda_ltm') or 0),
                                                  key=f"ebitda_{idx}", step=1, format="%d")
 
                     # 決算短信の抽出値があれば予想値・DPSにプリフィル
@@ -945,28 +1057,28 @@ render();
                     _dps_default = float(company.get('dps') or 0)  # 有報記載の実績配当
 
                     with col3:
-                        st.markdown("**BS（百万円）**")
-                        cash = st.number_input("現金及び預金（百万円）", value=int(company.get('cash') or 0),
+                        st.markdown("**BS**")
+                        cash = st.number_input("現金及び預金", value=int(company.get('cash') or 0),
                                                key=f"cash_{idx}", step=1, format="%d")
-                        debt = st.number_input("有利子負債（百万円）", value=int(company.get('total_debt') or 0),
+                        debt = st.number_input("有利子負債", value=int(company.get('total_debt') or 0),
                                                key=f"debt_{idx}", step=1, format="%d")
-                        eq = st.number_input("純資産（百万円）", value=int(company.get('equity_parent') or 0),
+                        eq = st.number_input("純資産", value=int(company.get('equity_parent') or 0),
                                              key=f"eq_{idx}", step=1, format="%d")
-                        dps = st.number_input("DPS - 実績配当（円・有報）", value=_dps_default,
+                        dps = st.number_input("DPS（実績配当・円）", value=_dps_default,
                                               key=f"dps_{idx}", step=1.0, format="%.1f")
 
                     col4, col5 = st.columns(2)
                     with col4:
-                        st.markdown("**予想値 - FY E（百万円）**")
+                        st.markdown("**予想値 - FY E**")
                         if tanshin:
-                            st.caption("📄 決算短信から自動プリフィル済み")
-                        rev_e = st.number_input("売上高予想（百万円）", value=_rev_e_default,
+                            st.caption("◆ 決算短信から自動プリフィル済み")
+                        rev_e = st.number_input("売上高予想", value=_rev_e_default,
                                                 key=f"reve_{idx}", step=1, format="%d")
-                        op_e = st.number_input("営業利益予想（百万円）", value=_op_e_default,
+                        op_e = st.number_input("営業利益予想", value=_op_e_default,
                                                key=f"ope_{idx}", step=1, format="%d")
-                        ni_e = st.number_input("純利益予想（百万円）", value=_ni_e_default,
+                        ni_e = st.number_input("純利益予想", value=_ni_e_default,
                                                key=f"nie_{idx}", step=1, format="%d")
-                        ebitda_e = st.number_input("EBITDA予想（百万円）", value=_ebitda_e_default,
+                        ebitda_e = st.number_input("EBITDA予想", value=_ebitda_e_default,
                                                    key=f"ebitdae_{idx}", step=1, format="%d")
 
                     # --- 時価総額・EV・マルチプル自動計算 ---
@@ -992,7 +1104,7 @@ render();
 
                     edited = dict(company)
                     edited['name'] = name
-                    edited['sector'] = sector
+                    edited['sector'] = company.get('sector', '')
                     edited['accounting'] = accounting
                     edited['fy_end'] = fy_end
                     edited['stock_price'] = stock_price if stock_price != 0 else None
@@ -1030,7 +1142,7 @@ render();
                                        "Unit: JPY millions\n"
                                        "LTM = Last Twelve Months")
 
-            if st.button("📥 Excelファイルを生成・ダウンロード", type="primary"):
+            if st.button("⬇ Excelファイルを生成・ダウンロード", type="primary"):
                 config = {
                     'title': title,
                     'date': date_str,
@@ -1050,7 +1162,7 @@ render();
                         excel_bytes = f.read()
 
                     st.download_button(
-                        label="📥 Comps_Table.xlsx をダウンロード",
+                        label="⬇ Comps_Table.xlsx をダウンロード",
                         data=excel_bytes,
                         file_name=f"Comps_Table_{datetime.today().strftime('%Y%m%d')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1077,4 +1189,4 @@ render();
 # ---------------------------------------------------------------------------
 
 st.divider()
-st.caption("くじらキャピタル株式会社 | Comps自動生成ツール v1.1 (build 3d33357)")
+st.caption("くじらキャピタル株式会社 | Comps自動生成ツール v1.2")

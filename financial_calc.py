@@ -176,9 +176,28 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data):
         dps_actual
     )
 
-    # BS日付
+    # BS日付・決算月
     hanki_doc = edinet_data.get('hanki_doc')
+    yuho_doc = edinet_data.get('yuho_doc')
     bs_date = ""
+    fy_end_month = 'Mar'  # デフォルト
+    _month_map = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
+                  7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
+    # periodEnd から決算月を推定（有報 > 半期報の順で確認）
+    for _doc in [yuho_doc, hanki_doc]:
+        if _doc and _doc.get('periodEnd'):
+            _pe = _doc['periodEnd'].replace('/', '-')
+            _parts = _pe.split('-')
+            if len(_parts) >= 2:
+                _m = int(_parts[1])
+                if _doc is yuho_doc:
+                    # 有報のperiodEndが年度末
+                    fy_end_month = _month_map.get(_m, 'Mar')
+                    break
+                else:
+                    # 半期報のperiodEndは中間期末 → +6ヶ月が年度末
+                    _fy_m = ((_m - 1 + 6) % 12) + 1
+                    fy_end_month = _month_map.get(_fy_m, 'Mar')
     if hanki_doc:
         pe = hanki_doc.get('periodEnd', '')
         if pe:
@@ -190,7 +209,7 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data):
         'name': company_name,
         'sector': '',
         'accounting': 'J-GAAP',
-        'fy_end': 'Mar',
+        'fy_end': fy_end_month,
         'stock_price': stock_price,
         'shares_outstanding': shares,
         'market_cap': market_cap,

@@ -23,5 +23,15 @@
     "rev_forecast": 1223500,
     "op_forecast": 82000,
     "ni_forecast": 42500
+  },
+  "2702": {
+    "rev_forecast": 405500,
+    "op_forecast": 54500,
+    "ni_forecast": 34500
+  },
+  "3197": {
+    "rev_forecast": 490000,
+    "op_forecast": 36000,
+    "ni_forecast": 29700
   }
 }

@@ -115,13 +115,13 @@ IFRS企業の`BondsAndBorrowings`（借入金＋社債合算）は`short_term_de
 ### サマリーテーブル（JavaScript付きHTMLテーブル）
 `st.components.v1.html`でiframe内にJavaScript付きHTMLテーブルをレンダリング。Streamlitの`NumberColumn`フォーマット制約を完全に回避。
 
-- **列**: コード、企業名、株価（円）＋取得日付、時価総額（百万円）、EV（百万円）、売上高LTM（百万円）、営業利益LTM（百万円）、EBITDA LTM（百万円）、EV/EBITDA LTM、Forward PER、直近四半期末PBR、配当利回り（直近年度末）
+- **列**: コード、決算月、企業名、株価（円）＋取得日付、時価総額（百万円）、EV（百万円）、売上高LTM（百万円）、営業利益LTM（百万円）、EBITDA LTM（百万円）、EV/EBITDA LTM、Forward PER、直近四半期末PBR、配当利回り（直近年度末）
 - **ヘッダー2行表示**: 1行目に項目名、2行目に単位（百万円）・日付・サブラベル（グレー小文字）
 - **ソート**: 列ヘッダークリックで昇順/降順トグル（▲▼アイコン付き）。生の数値データでソート後にフォーマット表示。
 - **フォーマット**: Python側で事前適用。整数列は桁区切りカンマ、マルチプルは`x`付き、配当利回りは`%`付き。
 - **右揃え**: 数値列すべてCSS `text-align:right`
 - **横スクロール**: テーブルが画面幅を超える場合、太め(10px)・グレー・丸角の見やすいスクロールバーを表示
-- Forward PERは決算短信の`ni_forecast`から動的再計算（アップロード後に即反映）
+- Forward PERは決算短信の`ni_forecast`から動的再計算（決算短信パース処理をテーブル構築より先に実行することで即反映）
 
 ### 証券コード検証
 `validate_stock_code(code_4)` — yfinance `history(period="5d")` で東証に存在するか軽量チェック。ローカルにキャッシュ（EDINET/株価/tanshin）がある企業はyfinance不要。フォーマット検証（4桁数字）は入力欄の下にリアルタイム表示。
@@ -130,6 +130,22 @@ IFRS企業の`BondsAndBorrowings`（借入金＋社債合算）は`short_term_de
 - 株価・発行済株式数を手入力可能（yfinanceレート制限時の対応）
 - 入力値から時価総額・EV・EV/EBITDA・PER・PBRをリアルタイム自動計算（st.metric表示）
 - 金額は整数表示（百万円）、DPSは小数1桁（円・有報実績）
+
+### UIテーマ・カラー設定
+- **カラースキーム**: 白背景（`#ffffff`）+ 水色アクセント（`#45b5e6`、quzilla.co.jpコーポレートサイトと統一）+ ダークグレーテキスト（`#333`）
+- **`.streamlit/config.toml`**: Streamlit標準テーマ設定（primaryColor, backgroundColor, secondaryBackgroundColor, textColor）
+- **カスタムCSS注入**: `st.markdown(unsafe_allow_html=True)`でタブ、ボタン、number_input右寄せ、placeholder色等を追加調整
+- **タイトル**: SVGアイコン（棒グラフ風・水色）+ HTMLカスタムレンダリング
+- **絵文字不使用**: UI全体でUnicode記号（▶◆◇●⬇▸等）に統一
+- **`st.number_input`のformat制約**: `%,d`（桁区切り）は非対応。`%d`のみ使用可能
+
+### 決算短信不足検出ロジック（決算月ベース）
+年度末から現在日付までの経過日数に基づき、要求する決算短信の種類を自動判定:
+- **年度末から92日以内**: 通期決算短信を要求（例: 12月決算企業に対し2月時点→「2025年12月期 通期決算短信」）
+- **92日超**: 経過月数から四半期を推定（〜6ヶ月=Q1、〜9ヶ月=Q2、それ以降=Q3）
+
+### 決算月の動的判定
+`financial_calc.py`の`build_company_data()`でEDINETの`periodEnd`から決算月を動的に取得。有報のperiodEndが年度末、半期報のperiodEndは中間期末（+6ヶ月が年度末）。ハードコード`'Mar'`ではなく企業ごとに正しい決算月を設定。
 
 ### SSL検証バイパス
 社内ネットワーク対応のため、`CURL_CA_BUNDLE=''` と `REQUESTS_CA_BUNDLE=''` を設定。`stock_fetcher.py`と`app.py`の両方で設定。
@@ -194,6 +210,7 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
+| 2026/2/27 | — | UIリニューアル: 白背景+水色アクセント(#45b5e6)、絵文字→Unicode記号、決算月列追加、決算短信不足検出ロジック改善、決算月動的判定 |
 | 2026/2/27 | bc02efc | 7550ゼンショー決算短信Q1追加、ルートPDF整理 |
 | 2026/2/27 | 1f31cff | IFRS/12月決算企業対応バグ修正7件 + 新3社(7550,2702,3197)データ追加 |
 | 2026/2/26 | 97aa2ef | サマリーヘッダー: 配当利回りに「直近年度末」追記 |
