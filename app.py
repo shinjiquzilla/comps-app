@@ -1164,117 +1164,117 @@ render();
             with st.form("manual_edit_form"):
                 tabs = st.tabs([f"  {c.get('code', '')}  {c.get('name', '')}  " for c in companies_for_config])
 
-            for idx, (tab, company) in enumerate(zip(tabs, companies_for_config)):
-                with tab:
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.markdown("**基本情報**")
-                        name = st.text_input("企業名", value=company.get('name', ''), key=f"name_{idx}")
-                        accounting = st.selectbox("会計基準",
-                                                  ["J-GAAP", "IFRS", "US-GAAP"],
-                                                  index=0, key=f"acc_{idx}")
-                        _fy_raw = company.get('fy_end', 'Mar')
-                        _fy_month_display = {'Mar': '3月', 'Jun': '6月', 'Sep': '9月', 'Dec': '12月',
-                                             'Jan': '1月', 'Feb': '2月', 'Apr': '4月', 'May': '5月',
-                                             'Jul': '7月', 'Aug': '8月', 'Oct': '10月', 'Nov': '11月'}
-                        fy_end = st.text_input("決算月", value=_fy_month_display.get(_fy_raw, _fy_raw), key=f"fy_{idx}")
-                        st.markdown("**株価・株式**")
-                        stock_price = st.number_input("株価（円）", value=float(company.get('stock_price') or 0),
-                                                      key=f"price_{idx}", step=1.0, format="%.0f")
-                        shares = st.number_input("発行済株式数（千株）", value=int(company.get('shares_outstanding') or 0),
-                                                 key=f"shares_{idx}", step=1, format="%d")
+                for idx, (tab, company) in enumerate(zip(tabs, companies_for_config)):
+                    with tab:
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.markdown("**基本情報**")
+                            name = st.text_input("企業名", value=company.get('name', ''), key=f"name_{idx}")
+                            accounting = st.selectbox("会計基準",
+                                                      ["J-GAAP", "IFRS", "US-GAAP"],
+                                                      index=0, key=f"acc_{idx}")
+                            _fy_raw = company.get('fy_end', 'Mar')
+                            _fy_month_display = {'Mar': '3月', 'Jun': '6月', 'Sep': '9月', 'Dec': '12月',
+                                                 'Jan': '1月', 'Feb': '2月', 'Apr': '4月', 'May': '5月',
+                                                 'Jul': '7月', 'Aug': '8月', 'Oct': '10月', 'Nov': '11月'}
+                            fy_end = st.text_input("決算月", value=_fy_month_display.get(_fy_raw, _fy_raw), key=f"fy_{idx}")
+                            st.markdown("**株価・株式**")
+                            stock_price = st.number_input("株価（円）", value=float(company.get('stock_price') or 0),
+                                                          key=f"price_{idx}", step=1.0, format="%.0f")
+                            shares = st.number_input("発行済株式数（千株）", value=int(company.get('shares_outstanding') or 0),
+                                                     key=f"shares_{idx}", step=1, format="%d")
 
-                    with col2:
-                        st.markdown("**P&L - LTM**")
-                        rev = st.number_input("売上高", value=int(company.get('rev_ltm') or 0),
-                                              key=f"rev_{idx}", step=1, format="%d")
-                        op = st.number_input("営業利益", value=int(company.get('op_ltm') or 0),
-                                             key=f"op_{idx}", step=1, format="%d")
-                        ni = st.number_input("純利益", value=int(company.get('ni_ltm') or 0),
-                                             key=f"ni_{idx}", step=1, format="%d")
-                        da = st.number_input("減価償却費", value=int(company.get('da_ltm') or 0),
-                                             key=f"da_{idx}", step=1, format="%d")
-                        ebitda = st.number_input("EBITDA", value=int(company.get('ebitda_ltm') or 0),
-                                                 key=f"ebitda_{idx}", step=1, format="%d")
+                        with col2:
+                            st.markdown("**P&L - LTM**")
+                            rev = st.number_input("売上高", value=int(company.get('rev_ltm') or 0),
+                                                  key=f"rev_{idx}", step=1, format="%d")
+                            op = st.number_input("営業利益", value=int(company.get('op_ltm') or 0),
+                                                 key=f"op_{idx}", step=1, format="%d")
+                            ni = st.number_input("純利益", value=int(company.get('ni_ltm') or 0),
+                                                 key=f"ni_{idx}", step=1, format="%d")
+                            da = st.number_input("減価償却費", value=int(company.get('da_ltm') or 0),
+                                                 key=f"da_{idx}", step=1, format="%d")
+                            ebitda = st.number_input("EBITDA", value=int(company.get('ebitda_ltm') or 0),
+                                                     key=f"ebitda_{idx}", step=1, format="%d")
 
-                    # 決算短信の抽出値があれば予想値・DPSにプリフィル
-                    tanshin = st.session_state.get('tanshin_forecasts', {}).get(company.get('code', ''), {})
-                    _rev_e_default = int(tanshin.get('rev_forecast') or company.get('rev_forecast') or 0)
-                    _op_e_default = int(tanshin.get('op_forecast') or company.get('op_forecast') or 0)
-                    _ni_e_default = int(tanshin.get('ni_forecast') or company.get('ni_forecast') or 0)
-                    _ebitda_e_default = int(company.get('ebitda_forecast') or 0)
-                    _dps_default = float(company.get('dps') or 0)  # 有報記載の実績配当
+                        # 決算短信の抽出値があれば予想値・DPSにプリフィル
+                        tanshin = st.session_state.get('tanshin_forecasts', {}).get(company.get('code', ''), {})
+                        _rev_e_default = int(tanshin.get('rev_forecast') or company.get('rev_forecast') or 0)
+                        _op_e_default = int(tanshin.get('op_forecast') or company.get('op_forecast') or 0)
+                        _ni_e_default = int(tanshin.get('ni_forecast') or company.get('ni_forecast') or 0)
+                        _ebitda_e_default = int(company.get('ebitda_forecast') or 0)
+                        _dps_default = float(company.get('dps') or 0)  # 有報記載の実績配当
 
-                    with col3:
-                        st.markdown("**BS**")
-                        cash = st.number_input("現金及び預金", value=int(company.get('cash') or 0),
-                                               key=f"cash_{idx}", step=1, format="%d")
-                        debt = st.number_input("有利子負債", value=int(company.get('total_debt') or 0),
-                                               key=f"debt_{idx}", step=1, format="%d")
-                        eq = st.number_input("純資産", value=int(company.get('equity_parent') or 0),
-                                             key=f"eq_{idx}", step=1, format="%d")
-                        dps = st.number_input("DPS（実績配当・円）", value=_dps_default,
-                                              key=f"dps_{idx}", step=1.0, format="%.1f")
+                        with col3:
+                            st.markdown("**BS**")
+                            cash = st.number_input("現金及び預金", value=int(company.get('cash') or 0),
+                                                   key=f"cash_{idx}", step=1, format="%d")
+                            debt = st.number_input("有利子負債", value=int(company.get('total_debt') or 0),
+                                                   key=f"debt_{idx}", step=1, format="%d")
+                            eq = st.number_input("純資産", value=int(company.get('equity_parent') or 0),
+                                                 key=f"eq_{idx}", step=1, format="%d")
+                            dps = st.number_input("DPS（実績配当・円）", value=_dps_default,
+                                                  key=f"dps_{idx}", step=1.0, format="%.1f")
 
-                    col4, col5 = st.columns(2)
-                    with col4:
-                        st.markdown("**予想値 - FY E**")
-                        if tanshin:
-                            st.caption("◆ 決算短信から自動プリフィル済み")
-                        rev_e = st.number_input("売上高予想", value=_rev_e_default,
-                                                key=f"reve_{idx}", step=1, format="%d")
-                        op_e = st.number_input("営業利益予想", value=_op_e_default,
-                                               key=f"ope_{idx}", step=1, format="%d")
-                        ni_e = st.number_input("純利益予想", value=_ni_e_default,
-                                               key=f"nie_{idx}", step=1, format="%d")
-                        ebitda_e = st.number_input("EBITDA予想", value=_ebitda_e_default,
-                                                   key=f"ebitdae_{idx}", step=1, format="%d")
+                        col4, col5 = st.columns(2)
+                        with col4:
+                            st.markdown("**予想値 - FY E**")
+                            if tanshin:
+                                st.caption("◆ 決算短信から自動プリフィル済み")
+                            rev_e = st.number_input("売上高予想", value=_rev_e_default,
+                                                    key=f"reve_{idx}", step=1, format="%d")
+                            op_e = st.number_input("営業利益予想", value=_op_e_default,
+                                                   key=f"ope_{idx}", step=1, format="%d")
+                            ni_e = st.number_input("純利益予想", value=_ni_e_default,
+                                                   key=f"nie_{idx}", step=1, format="%d")
+                            ebitda_e = st.number_input("EBITDA予想", value=_ebitda_e_default,
+                                                       key=f"ebitdae_{idx}", step=1, format="%d")
 
-                    # --- 時価総額・EV・マルチプル自動計算 ---
-                    mcap = int(stock_price * shares / 1000) if stock_price and shares else 0
-                    ev = mcap + (debt or 0) - (cash or 0) if mcap else 0
+                        # --- 時価総額・EV・マルチプル自動計算 ---
+                        mcap = int(stock_price * shares / 1000) if stock_price and shares else 0
+                        ev = mcap + (debt or 0) - (cash or 0) if mcap else 0
 
-                    with col5:
-                        st.markdown("**自動計算値**")
-                        st.metric("時価総額（百万円）", f"{mcap:,}" if mcap else "N/A")
-                        st.metric("EV（百万円）", f"{ev:,}" if ev else "N/A")
-                        if ebitda and ebitda > 0 and ev > 0:
-                            st.metric("EV/EBITDA (LTM)", f"{ev / ebitda:.1f}x")
-                        else:
-                            st.metric("EV/EBITDA (LTM)", "N/A")
-                        if ni_e and ni_e > 0 and mcap > 0:
-                            st.metric("PER (FY E)", f"{mcap / ni_e:.1f}x")
-                        else:
-                            st.metric("PER (FY E)", "N/A")
-                        if eq and eq > 0 and mcap > 0:
-                            st.metric("PBR", f"{mcap / eq:.2f}x")
-                        else:
-                            st.metric("PBR", "N/A")
+                        with col5:
+                            st.markdown("**自動計算値**")
+                            st.metric("時価総額（百万円）", f"{mcap:,}" if mcap else "N/A")
+                            st.metric("EV（百万円）", f"{ev:,}" if ev else "N/A")
+                            if ebitda and ebitda > 0 and ev > 0:
+                                st.metric("EV/EBITDA (LTM)", f"{ev / ebitda:.1f}x")
+                            else:
+                                st.metric("EV/EBITDA (LTM)", "N/A")
+                            if ni_e and ni_e > 0 and mcap > 0:
+                                st.metric("PER (FY E)", f"{mcap / ni_e:.1f}x")
+                            else:
+                                st.metric("PER (FY E)", "N/A")
+                            if eq and eq > 0 and mcap > 0:
+                                st.metric("PBR", f"{mcap / eq:.2f}x")
+                            else:
+                                st.metric("PBR", "N/A")
 
-                    edited = dict(company)
-                    edited['name'] = name
-                    edited['sector'] = company.get('sector', '')
-                    edited['accounting'] = accounting
-                    edited['fy_end'] = fy_end
-                    edited['stock_price'] = stock_price if stock_price != 0 else None
-                    edited['shares_outstanding'] = shares if shares != 0 else None
-                    edited['market_cap'] = mcap if mcap != 0 else None
-                    edited['rev_ltm'] = rev if rev != 0 else None
-                    edited['op_ltm'] = op if op != 0 else None
-                    edited['ni_ltm'] = ni if ni != 0 else None
-                    edited['da_ltm'] = da if da != 0 else None
-                    edited['ebitda_ltm'] = ebitda if ebitda != 0 else None
-                    edited['cash'] = cash if cash != 0 else None
-                    edited['total_debt'] = debt if debt != 0 else None
-                    edited['equity_parent'] = eq if eq != 0 else None
-                    edited['dps'] = dps if dps != 0 else None
-                    edited['rev_forecast'] = rev_e if rev_e != 0 else None
-                    edited['op_forecast'] = op_e if op_e != 0 else None
-                    edited['ni_forecast'] = ni_e if ni_e != 0 else None
-                    edited['ebitda_forecast'] = ebitda_e if ebitda_e != 0 else None
-                    edited.pop('_ev', None)
-                    edited.pop('_multiples', None)
-                    edited_companies.append(edited)
+                        edited = dict(company)
+                        edited['name'] = name
+                        edited['sector'] = company.get('sector', '')
+                        edited['accounting'] = accounting
+                        edited['fy_end'] = fy_end
+                        edited['stock_price'] = stock_price if stock_price != 0 else None
+                        edited['shares_outstanding'] = shares if shares != 0 else None
+                        edited['market_cap'] = mcap if mcap != 0 else None
+                        edited['rev_ltm'] = rev if rev != 0 else None
+                        edited['op_ltm'] = op if op != 0 else None
+                        edited['ni_ltm'] = ni if ni != 0 else None
+                        edited['da_ltm'] = da if da != 0 else None
+                        edited['ebitda_ltm'] = ebitda if ebitda != 0 else None
+                        edited['cash'] = cash if cash != 0 else None
+                        edited['total_debt'] = debt if debt != 0 else None
+                        edited['equity_parent'] = eq if eq != 0 else None
+                        edited['dps'] = dps if dps != 0 else None
+                        edited['rev_forecast'] = rev_e if rev_e != 0 else None
+                        edited['op_forecast'] = op_e if op_e != 0 else None
+                        edited['ni_forecast'] = ni_e if ni_e != 0 else None
+                        edited['ebitda_forecast'] = ebitda_e if ebitda_e != 0 else None
+                        edited.pop('_ev', None)
+                        edited.pop('_multiples', None)
+                        edited_companies.append(edited)
 
                 _form_submitted = st.form_submit_button("▶ データを反映", type="primary", use_container_width=True)
 
