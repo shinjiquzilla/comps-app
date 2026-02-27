@@ -106,7 +106,7 @@ def main():
             if not code_dir.is_dir():
                 continue
             code = code_dir.name
-            if not code.isdigit() or len(code) != 4:
+            if len(code) != 4 or not all(c.isdigit() or c.isalpha() for c in code):
                 continue
 
             # meta.json

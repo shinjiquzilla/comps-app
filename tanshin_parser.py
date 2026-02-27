@@ -380,19 +380,25 @@ def identify_tanshin_pdf(pdf_bytes, candidate_codes):
 
     # --- 証券コード検出 ---
     # 決算短信1ページ目: 「コード番号 6763」「証券コード：6763」等
+    # 2024年1月〜アルファベット混在コードあり（例: 241A）
     code_patterns = [
-        r'コード[番号\s:：]*(\d{4})',
-        r'証券コード[\s:：]*(\d{4})',
-        r'[\(（](\d{4})[\)）]',  # (6763) のようなパターン
+        r'コード[番号\s:：]*([0-9A-Za-z]{4})',
+        r'証券コード[\s:：]*([0-9A-Za-z]{4})',
+        r'[\(（]([0-9A-Za-z]{4})[\)）]',
     ]
     detected_code = None
     for pat in code_patterns:
-        m = re.search(pat, text)
-        if m:
-            code = m.group(1)
-            if code in candidate_codes:
-                detected_code = code
+        for m in re.finditer(pat, text):
+            code = m.group(1).upper()
+            # candidate_codesとの照合（大文字小文字を無視）
+            for cc in candidate_codes:
+                if code == cc.upper():
+                    detected_code = cc
+                    break
+            if detected_code:
                 break
+        if detected_code:
+            break
 
     if detected_code is None:
         # フォールバック: candidate_codesの中でテキストに含まれるものを探す

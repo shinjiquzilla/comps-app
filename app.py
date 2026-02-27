@@ -254,18 +254,21 @@ with col1:
     codes_input = st.text_input(
         "証券コード（カンマ区切り、スペースなし）",
         value="",
-        placeholder="例: 6763,6989,6768,6779",
+        placeholder="例: 6763,6989,6768,241A",
     )
 
 with col2:
     generate_btn = st.button("▶ Compsを生成", type="primary", use_container_width=True)
 
 # --- 入力フォーマット即時検証 ---
+# 証券コードは4桁の英数字（2024年1月〜アルファベット混在コードあり、例: 241A）
+import re as _re
+_VALID_CODE_RE = _re.compile(r'^[0-9A-Za-z]{4}$')
 _input_codes_raw = [c.strip() for c in codes_input.split(",") if c.strip()]
 _format_errors = []
 for _c in _input_codes_raw:
-    if not _c.isdigit() or len(_c) != 4:
-        _format_errors.append(f"「{_c}」は4桁の数字ではありません")
+    if not _VALID_CODE_RE.match(_c):
+        _format_errors.append(f"「{_c}」は4桁の英数字ではありません")
 if _format_errors and codes_input.strip():
     for _fe in _format_errors:
         st.error(_fe)
@@ -292,8 +295,8 @@ if generate_btn:
     codes = [c.strip() for c in codes_input.split(",") if c.strip()]
     if not codes:
         st.error("証券コードを入力してください。")
-    elif any(not c.isdigit() or len(c) != 4 for c in codes):
-        st.error("証券コードは4桁の数字で入力してください。")
+    elif any(not _VALID_CODE_RE.match(c) for c in codes):
+        st.error("証券コードは4桁の英数字で入力してください（例: 6763, 241A）。")
     else:
         # EDINET API Key チェック（全社キャッシュ済みならキー不要）
         # まず全社のキャッシュ状況を事前チェック
@@ -1116,7 +1119,9 @@ render();
             st.subheader("手動データ補完")
 
             edited_companies = []
-            tabs = st.tabs([f"  {c.get('code', '')}  {c.get('name', '')}  " for c in companies_for_config])
+
+            with st.form("manual_edit_form"):
+                tabs = st.tabs([f"  {c.get('code', '')}  {c.get('name', '')}  " for c in companies_for_config])
 
             for idx, (tab, company) in enumerate(zip(tabs, companies_for_config)):
                 with tab:
@@ -1229,6 +1234,8 @@ render();
                     edited.pop('_ev', None)
                     edited.pop('_multiples', None)
                     edited_companies.append(edited)
+
+                _form_submitted = st.form_submit_button("▶ データを反映", type="primary", use_container_width=True)
 
             # --- Excel生成 ---
             st.divider()

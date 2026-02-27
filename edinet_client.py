@@ -55,6 +55,7 @@ ELEMENT_MAP = {
     # P&L
     'jppfs_cor:NetSales': 'revenue',
     'jppfs_cor:Revenue': 'revenue',
+    'jppfs_cor:OperatingRevenue': 'revenue',  # サービス業（通信・旅行等）の「営業収益」
     'jppfs_cor:OperatingIncome': 'operating_income',
     'jppfs_cor:OrdinaryIncome': 'ordinary_income',
     'jppfs_cor:ProfitLossAttributableToOwnersOfParent': 'net_income',
@@ -83,6 +84,7 @@ ELEMENT_MAP = {
     # P&L
     'jpigp_cor:NetSalesIFRS': 'revenue',
     'jpigp_cor:RevenueIFRS': 'revenue',
+    'jpigp_cor:OperatingRevenueIFRS': 'revenue',  # IFRS営業収益
     'jpigp_cor:OperatingIncomeIFRS': 'operating_income',
     'jpigp_cor:OperatingProfitIFRS': 'operating_income',
     'jpigp_cor:OperatingProfitLossIFRS': 'operating_income',
@@ -112,6 +114,7 @@ ELEMENT_MAP = {
 SUMMARY_ELEMENT_MAP = {
     # J-GAAP
     'jpcrp_cor:NetSalesSummaryOfBusinessResults': 'revenue',
+    'jpcrp_cor:OperatingRevenueSummaryOfBusinessResults': 'revenue',  # 営業収益
     'jpcrp_cor:OperatingIncomeLossSummaryOfBusinessResults': 'operating_income',
     'jpcrp_cor:OrdinaryIncomeLossSummaryOfBusinessResults': 'ordinary_income',
     'jpcrp_cor:ProfitLossAttributableToOwnersOfParentSummaryOfBusinessResults': 'net_income',
@@ -208,7 +211,7 @@ def clear_cache(code_4=None):
 
 
 def to_sec_code(code: str) -> str:
-    """4桁証券コード → 5桁（末尾0）変換。"""
+    """4桁証券コード → 5桁（末尾0）変換。英数字混在コード対応。"""
     code = code.strip()
     return code + "0" if len(code) == 4 else code
 
