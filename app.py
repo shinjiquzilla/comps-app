@@ -1111,20 +1111,40 @@ render();
                     suggestion = "最新の決算短信"
 
                 if not ni_forecast:
+                    # PDFがアップロード済みか確認（ローカル + Supabase Storage）
+                    _has_pdf = False
+                    _local_tanshin = _tanshin_base / code
+                    if _local_tanshin.is_dir() and any(_local_tanshin.glob("*.pdf")):
+                        _has_pdf = True
+                    elif _HAS_SUPABASE:
+                        try:
+                            _sb_files = get_supabase().storage.from_('tanshin-pdfs').list(code)
+                            if _sb_files and len(_sb_files) > 0:
+                                _has_pdf = True
+                        except Exception:
+                            pass
                     _critical_missing.append({
                         'code': code,
                         'name': code_name_map.get(code, ''),
                         'suggestion': suggestion,
+                        'has_pdf': _has_pdf,
                     })
 
             # --- Step 4: 不足状況の表示 ---
             if _critical_missing:
                 st.error(f"❌ {len(_critical_missing)}/{len(candidate_codes)}社の業績予想が不足しています。")
                 for mi in _critical_missing:
-                    st.warning(
-                        f"**{mi['code']} {mi['name']}**: PER（通期予想当期純利益が必要）が計算できません。\n\n"
-                        f"通期の業績予想が掲載されている **{mi['suggestion']}** をアップロードしてください。"
-                    )
+                    if mi['has_pdf']:
+                        st.warning(
+                            f"**{mi['code']} {mi['name']}**: PER（通期予想当期純利益が必要）が計算できません。\n\n"
+                            f"決算短信はアップロード済みですが、業績予想の自動抽出ができませんでした。"
+                            f"下の「手動データ補完」セクションで純利益予想を入力し「▶ データを反映」を押してください。"
+                        )
+                    else:
+                        st.warning(
+                            f"**{mi['code']} {mi['name']}**: PER（通期予想当期純利益が必要）が計算できません。\n\n"
+                            f"通期の業績予想が掲載されている **{mi['suggestion']}** をアップロードしてください。"
+                        )
             else:
                 st.success(f"✅ 全{len(candidate_codes)}社の業績予想データが揃っています。")
 
