@@ -1258,6 +1258,35 @@ render();
 
                 _form_submitted = st.form_submit_button("▶ データを反映", type="primary", use_container_width=True)
 
+            # フォーム送信時: 予想値をSupabase + session_stateに保存
+            if _form_submitted and _HAS_SUPABASE:
+                for ec in edited_companies:
+                    _code = ec.get('code', '')
+                    _ni_e = ec.get('ni_forecast')
+                    _rev_e = ec.get('rev_forecast')
+                    _op_e = ec.get('op_forecast')
+                    if _code and (_ni_e or _rev_e or _op_e):
+                        _fc = {
+                            'ni_forecast': _ni_e,
+                            'rev_forecast': _rev_e,
+                            'op_forecast': _op_e,
+                        }
+                        # session_stateに既存のfy_month/period_typeがあれば引き継ぐ
+                        _existing = st.session_state.get('tanshin_forecasts', {}).get(_code, {})
+                        _fc['fy_month'] = _existing.get('fy_month', 'unknown')
+                        _fc['period_type'] = _existing.get('period_type', 'manual')
+                        # session_stateに保存
+                        if 'tanshin_forecasts' not in st.session_state:
+                            st.session_state.tanshin_forecasts = {}
+                        st.session_state.tanshin_forecasts[_code] = _fc
+                        # Supabase + ローカルJSONに保存
+                        try:
+                            save_forecast(_code, _fc)
+                        except Exception:
+                            pass
+                _save_forecasts_cache(st.session_state.get('tanshin_forecasts', {}))
+                st.success("予想値をデータベースに保存しました。")
+
             # --- Excel生成 ---
             st.divider()
             st.subheader("Excel出力")
