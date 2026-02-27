@@ -487,6 +487,11 @@ def extract_financial_data(zip_bytes, include_prior=False):
                         key = map_key
                         break
         if key is None:
+            # デバッグ: 未マッチの減価償却関連要素をログ出力
+            label = clean(parts[1]) if len(parts) > 1 else ''
+            if '減価償却' in label or 'epreciation' in element_id.lower() or 'mortis' in element_id.lower() or 'mortiz' in element_id.lower():
+                import logging
+                logging.warning(f"[EDINET] 未マッチD&A要素: element_id={element_id}, label={label}, value={value_str}")
             continue
 
         # 格納先を選択
