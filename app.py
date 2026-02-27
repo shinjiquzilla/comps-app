@@ -1248,13 +1248,14 @@ render();
                             # EBITDA予想 = 営業利益予想 + 減価償却費（予想 or 直近年度末実績）
                             _da_for_ebitda = da_e if da_e and da_e != 0 else _da_ltm_actual
                             ebitda_e = (op_e + _da_for_ebitda) if op_e and _da_for_ebitda else 0
+                            _ebitda_note = ""
                             if ebitda_e > 0:
-                                _ebitda_note = ""
                                 if (da_e == 0 or not da_e) and _da_ltm_actual > 0:
                                     _ebitda_note = f"（D&A: 直近年度末実績 {_da_ltm_actual:,}）"
                                 elif _da_is_actual and da_e == _da_ltm_actual and _da_ltm_actual > 0:
                                     _ebitda_note = "（D&A: 直近年度末実績）"
-                                st.markdown(f"**EBITDA予想: {ebitda_e:,}** {_ebitda_note}")
+                            st.metric("EBITDA予想", f"{ebitda_e:,}" if ebitda_e > 0 else "N/A",
+                                      help=_ebitda_note if _ebitda_note else None)
 
                         # --- 時価総額・EV・マルチプル自動計算 ---
                         mcap = int(stock_price * shares / 1000) if stock_price and shares else 0
