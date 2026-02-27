@@ -76,15 +76,28 @@ Step 0の検証で以下のいずれかがあればyfinance検証をスキップ
 
 ## 主要な技術的判断
 
-### EDINET CSV パーサー（IFRS対応済み）
+### EDINET CSV パーサー（IFRS・12月決算対応済み）
 - **J-GAAP**: `jppfs_cor:` プレフィックスの要素IDでマッチ
-- **IFRS**: `jpigp_cor:〜IFRS` プレフィックスの要素IDを追加済み（6779 日本電波工業で確認）
+- **IFRS**: `jpigp_cor:〜IFRS` プレフィックスの要素IDを追加済み（6779 日本電波工業、3197 すかいらーくHDで確認）
 - **連結フィルタ**: J-GAAPは`連結`、IFRSは`その他`。両方受け入れ、`個別`のみ除外
 - **会社固有プレフィックス対応**: 半期報告書で`jpcrp040300-ssr_E01807-000:〜IFRS`のようなプレフィックスが使われる場合、コロン以降の要素名部分で動的マッチ
 - **経営指標等（SUMMARY_ELEMENT_MAP）**: J-GAAP/IFRS両方の`jpcrp_cor:`要素をフォールバック用に登録。DPS（実績配当）も`DividendPaidPerShareSummaryOfBusinessResults`で取得
+- **12月決算企業対応**: 相対年度フィルタに`当四半期累計期間`/`当四半期会計期間末`/`前年度同四半期累計期間`/`前年度同四半期会計期間末`を追加（2702マクドナルド、3197すかいらーくで確認）
+- **IFRS営業利益**: `OperatingProfitLossIFRS`と`OperatingIncomeLossIFRS`の両方をマッピング（企業によりどちらが使われるか異なる）
+- **IFRS有利子負債**: `BondsAndBorrowingsCLIFRS`/`BondsAndBorrowingsNCLIFRS`（借入金＋社債合算）をマッピング
+- **IFRS自己資本比率**: `EquityToAssetRatioIFRSSummaryOfBusinessResults`は実際には「1株当たり親会社所有者帰属持分」を返すため除外。J-GAAP版のみ使用
+- **のれん償却費D&A**: `DepreciationAndAmortizationOfGoodwillOpeCF`をマッピング（2702マクドナルドで確認）
 
 ### LTM計算（Calendarize対応済み）
-`edinet_client.py` の `extract_financial_data(include_prior=True)` で半期報告書CSVから前期H1データ（`相対年度=前中間期/前中間期末`）を抽出。`financial_calc.py` の `build_company_data()` で **正確なLTM = FY通期 − 前期H1 + 今期H1** を自動計算。前期H1が取れない場合は通期値にフォールバック。
+`edinet_client.py` の `extract_financial_data(include_prior=True)` で半期報告書CSVから前期H1データ（`相対年度=前中間期/前中間期末` or `前年度同四半期累計期間/前年度同四半期会計期間末`）を抽出。`financial_calc.py` の `build_company_data()` で **正確なLTM = FY通期 − 前期H1 + 今期H1** を自動計算。前期H1が取れない場合は通期値にフォールバック。
+
+### 有利子負債の計算
+`calc_total_debt()` — 以下の項目を合算:
+`short_term_debt` + `long_term_debt` + `bonds` + `current_long_term_debt` + `current_bonds` + `lease_debt_current` + `lease_debt_noncurrent`
+IFRS企業の`BondsAndBorrowings`（借入金＋社債合算）は`short_term_debt`/`long_term_debt`にマッピング。
+
+### PBR計算の純資産
+`equity_parent`（親会社帰属持分） → `shareholders_equity` → `net_assets` の優先順でフォールバック。IFRS企業は`equity_parent`のみ持つ場合がある。
 
 ### 配当利回りの計算
 **有報記載の直近終了フル年度の実績配当額** ÷ 現在株価。今期の予想配当額ではなく実績値を使用。DPSは`edinet_client.py`の`SUMMARY_ELEMENT_MAP`から自動取得（`jpcrp_cor:DividendPaidPerShareSummaryOfBusinessResults`）。
@@ -137,20 +150,27 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 ## キャッシュ済み対象企業
 
 ### Comps Set 1（帝国通信工業）
-| コード | 会社名 | 会計基準 | EDINET | 株価 | 決算短信 |
-|--------|--------|---------|--------|------|---------|
-| 6763 | 帝国通信工業 | J-GAAP | OK | OK | — |
-| 6989 | 北陸電気工業 | J-GAAP | OK | OK | — |
-| 6768 | タムラ製作所 | J-GAAP | OK | OK | — |
-| 6779 | 日本電波工業 | IFRS | OK | OK | — |
+| コード | 会社名 | 会計基準 | 決算期 | EDINET | 株価 | 決算短信 |
+|--------|--------|---------|--------|--------|------|---------|
+| 6763 | 帝国通信工業 | J-GAAP | 3月 | OK | OK | — |
+| 6989 | 北陸電気工業 | J-GAAP | 3月 | OK | OK | — |
+| 6768 | タムラ製作所 | J-GAAP | 3月 | OK | OK | — |
+| 6779 | 日本電波工業 | IFRS | 3月 | OK | OK | — |
 
 ### Comps Set 2（ローム）
-| コード | 会社名 | 会計基準 | EDINET | 株価 | 決算短信 |
-|--------|--------|---------|--------|------|---------|
-| 6616 | トレックス・セミコンダクター | J-GAAP | OK | OK | Q1 |
-| 6999 | KOA | J-GAAP | OK | OK | Q1 |
-| 6962 | 大真空 | J-GAAP | OK | OK | Q1 |
-| 6963 | ローム | J-GAAP | OK | OK | Q1 |
+| コード | 会社名 | 会計基準 | 決算期 | EDINET | 株価 | 決算短信 |
+|--------|--------|---------|--------|--------|------|---------|
+| 6616 | トレックス・セミコンダクター | J-GAAP | 3月 | OK | OK | Q1 |
+| 6999 | KOA | J-GAAP | 3月 | OK | OK | Q1 |
+| 6962 | 大真空 | J-GAAP | 3月 | OK | OK | Q1 |
+| 6963 | ローム | J-GAAP | 3月 | OK | OK | Q1 |
+
+### Comps Set 3（外食）
+| コード | 会社名 | 会計基準 | 決算期 | EDINET | 株価 | 決算短信 |
+|--------|--------|---------|--------|--------|------|---------|
+| 7550 | ゼンショーホールディングス | J-GAAP | 3月 | OK | OK | Q1 |
+| 2702 | 日本マクドナルドホールディングス | J-GAAP | 12月 | OK | OK | — |
+| 3197 | すかいらーくホールディングス | IFRS | 12月 | OK | OK | — |
 
 ## デプロイ
 - **Streamlit Cloud**: `shinjiquzilla/comps-app` リポジトリ main ブランチ連携
@@ -174,6 +194,8 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
+| 2026/2/27 | bc02efc | 7550ゼンショー決算短信Q1追加、ルートPDF整理 |
+| 2026/2/27 | 1f31cff | IFRS/12月決算企業対応バグ修正7件 + 新3社(7550,2702,3197)データ追加 |
 | 2026/2/26 | 97aa2ef | サマリーヘッダー: 配当利回りに「直近年度末」追記 |
 | 2026/2/26 | debf4a1 | サマリーヘッダー: PER Forward / PBR 直近四半期末に変更 |
 | 2026/2/26 | 81a55a1 | FY PER → Forward PER に列名変更 |
@@ -206,3 +228,5 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 - EDINET APIは1日1リクエスト/秒のレート制限あり（`time.sleep(1)`で対応済み）
 - yfinanceレート制限は完全には回避できない→永続キャッシュ＋手動株価入力で代替可能
 - Streamlit CloudのNumberColumn formatが効かない→JS付きHTMLテーブルで回避済み
+- IFRS企業のリース負債（`OtherFinancialLiabilities`）は`BondsAndBorrowings`と分離されている場合があり、現状はBondsAndBorrowingsのみ計上。すかいらーく等のIFRS16リース負債は含まれていない可能性がある
+- 2702（マクドナルド）・3197（すかいらーく）は12月決算。Forward PER用の決算短信（Q3）が未アップロード
