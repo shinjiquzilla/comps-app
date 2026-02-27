@@ -126,7 +126,7 @@ st.markdown("""
   <span style="font-size:2rem; font-weight:700; color:#333333;">類似上場企業比較分析（Comps）自動生成ツール</span>
 </div>
 """, unsafe_allow_html=True)
-st.caption("証券コードを入力して「生成」ボタンを押すだけで、Compsを自動作成します。")
+st.caption("証券コードを入力して「生成」ボタンを押すだけで、Compsを自動生成します。")
 
 # ---------------------------------------------------------------------------
 # Custom CSS: ダークテーマ統一
