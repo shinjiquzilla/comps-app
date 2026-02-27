@@ -1244,7 +1244,7 @@ render();
                             da_e = st.number_input("減価償却費予想",
                                 value=_da_e_default,
                                 key=f"dae_{idx}", step=1, format="%d")
-                            st.caption("予想が存在せず0のままとすると直近年度末の減価償却費で簡便的に計算します")
+                            st.caption("減価償却費予想が存在しない場合、0のままとすると、直近年度末の減価償却費を使って簡便的にEBITDA予想を計算します")
                             # EBITDA予想: 反映済みならその値、なければ0
                             _code_for_ebitda = company.get('code', '')
                             _ebitda_e_saved = st.session_state.get('_ebitda_calc', {}).get(_code_for_ebitda, 0)
