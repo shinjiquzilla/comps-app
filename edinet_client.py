@@ -51,6 +51,7 @@ ELEMENT_MAP = {
     'jppfs_cor:ProfitLoss': 'profit_loss',
     # CF statement D&A
     'jppfs_cor:DepreciationAndAmortizationOpeCF': 'depreciation',
+    'jppfs_cor:DepreciationAndAmortizationOfGoodwillOpeCF': 'depreciation',
     # BS
     'jppfs_cor:CashAndDeposits': 'cash',
     'jppfs_cor:CashAndCashEquivalents': 'cash',
@@ -74,6 +75,7 @@ ELEMENT_MAP = {
     'jpigp_cor:RevenueIFRS': 'revenue',
     'jpigp_cor:OperatingIncomeIFRS': 'operating_income',
     'jpigp_cor:OperatingProfitIFRS': 'operating_income',
+    'jpigp_cor:OperatingProfitLossIFRS': 'operating_income',
     'jpigp_cor:ProfitLossAttributableToOwnersOfParentIFRS': 'net_income',
     'jpigp_cor:ProfitLossIFRS': 'profit_loss',
     # CF statement D&A
@@ -86,6 +88,8 @@ ELEMENT_MAP = {
     'jpigp_cor:LongTermLoansPayableIFRS': 'long_term_debt',
     'jpigp_cor:LongTermDebtIFRS': 'long_term_debt',
     'jpigp_cor:BondsPayableIFRS': 'bonds',
+    'jpigp_cor:BondsAndBorrowingsCLIFRS': 'short_term_debt',
+    'jpigp_cor:BondsAndBorrowingsNCLIFRS': 'long_term_debt',
     'jpigp_cor:CurrentPortionOfLongTermLoansPayableIFRS': 'current_long_term_debt',
     'jpigp_cor:LeaseLiabilitiesCLIFRS': 'lease_debt_current',
     'jpigp_cor:LeaseLiabilitiesNCLIFRS': 'lease_debt_noncurrent',
@@ -109,9 +113,11 @@ SUMMARY_ELEMENT_MAP = {
     'jpcrp_cor:RevenueIFRSSummaryOfBusinessResults': 'revenue',
     'jpcrp_cor:NetSalesIFRSSummaryOfBusinessResults': 'revenue',
     'jpcrp_cor:OperatingProfitLossIFRSSummaryOfBusinessResults': 'operating_income',
+    'jpcrp_cor:OperatingIncomeLossIFRSSummaryOfBusinessResults': 'operating_income',
     'jpcrp_cor:ProfitLossAttributableToOwnersOfParentIFRSSummaryOfBusinessResults': 'net_income',
     'jpcrp_cor:ProfitLossIFRSSummaryOfBusinessResults': 'profit_loss',
-    'jpcrp_cor:EquityToAssetRatioIFRSSummaryOfBusinessResults': 'equity_ratio',
+    # Note: EquityToAssetRatioIFRSSummaryOfBusinessResults は実際には
+    # 「1株当たり親会社所有者帰属持分(IFRS)」であり自己資本比率ではないため除外
     'jpcrp_cor:DividendPaidPerShareIFRSSummaryOfBusinessResults': 'dps',
 }
 
@@ -412,10 +418,12 @@ def extract_financial_data(zip_bytes, include_prior=False):
     result = {}
     prior_result = {}
 
-    # 当期（有報: 当期/当期末、半期報: 当中間期/当中間期末）
-    current_periods = ('当期', '当期末', '当中間期', '当中間期末')
-    # 前期（有報: 前期/前期末、半期報: 前中間期/前中間期末）
-    prior_periods = ('前期', '前期末', '前中間期', '前中間期末')
+    # 当期（有報: 当期/当期末、半期報: 当中間期/当中間期末、四半期報: 当四半期累計期間/当四半期会計期間末）
+    current_periods = ('当期', '当期末', '当中間期', '当中間期末',
+                       '当四半期累計期間', '当四半期会計期間末')
+    # 前期（有報: 前期/前期末、半期報: 前中間期/前中間期末、四半期報: 前年度同四半期累計期間/前年度同四半期会計期間末）
+    prior_periods = ('前期', '前期末', '前中間期', '前中間期末',
+                     '前年度同四半期累計期間', '前年度同四半期会計期間末')
 
     for line in lines[1:]:  # ヘッダースキップ
         parts = line.split('\t')

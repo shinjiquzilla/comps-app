@@ -34,7 +34,8 @@ def calc_total_debt(financials):
     """
     keys = [
         'short_term_debt', 'long_term_debt', 'bonds',
-        'current_long_term_debt', 'current_bonds', 'lease_debt'
+        'current_long_term_debt', 'current_bonds',
+        'lease_debt_current', 'lease_debt_noncurrent',
     ]
     total = 0
     found_any = False
@@ -145,7 +146,10 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data):
     # BS values（半期報告書が最新なので優先）
     cash = hanki.get('cash') or yuho.get('cash')
     total_debt = calc_total_debt(hanki) or calc_total_debt(yuho)
-    equity = hanki.get('net_assets') or hanki.get('equity') or yuho.get('net_assets') or yuho.get('equity')
+    equity = (hanki.get('equity_parent') or hanki.get('shareholders_equity')
+              or hanki.get('net_assets') or hanki.get('equity')
+              or yuho.get('equity_parent') or yuho.get('shareholders_equity')
+              or yuho.get('net_assets') or yuho.get('equity'))
 
     # 自己資本比率
     equity_ratio = hanki.get('equity_ratio') or yuho.get('equity_ratio')

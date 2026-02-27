@@ -1,0 +1,21 @@
+{
+  "last_searched": "2026-02-27",
+  "search_days": 400,
+  "company_name": "日本マクドナルドホールディングス",
+  "docs": [
+    {
+      "docID": "S100VH4I",
+      "docTypeCode": "120",
+      "periodEnd": "2024-12-31",
+      "filerName": "日本マクドナルドホールディングス株式会社",
+      "secCode": "27020"
+    },
+    {
+      "docID": "S100WI89",
+      "docTypeCode": "160",
+      "periodEnd": "2025-12-31",
+      "filerName": "日本マクドナルドホールディングス株式会社",
+      "secCode": "27020"
+    }
+  ]
+}
