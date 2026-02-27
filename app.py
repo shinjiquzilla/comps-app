@@ -207,14 +207,25 @@ h2, h3 {
 with st.sidebar:
     st.header("設定")
 
-    # EDINET API Key（secrets にあればそちらを優先）
+    # EDINET API Key（secrets → Supabase app_config → 手動入力）
     default_edinet_key = ""
     try:
         if "edinet" in st.secrets:
             default_edinet_key = st.secrets["edinet"].get("api_key", "")
-            os.environ["EDINET_API_KEY"] = default_edinet_key
     except Exception:
         pass
+    # Supabase app_config からフォールバック
+    if not default_edinet_key and _HAS_SUPABASE:
+        try:
+            _sb = get_supabase()
+            if _sb:
+                _cfg = _sb.table("app_config").select("value").eq("key", "edinet_api_key").limit(1).execute()
+                if _cfg.data:
+                    default_edinet_key = _cfg.data[0].get("value", "")
+        except Exception:
+            pass
+    if default_edinet_key:
+        os.environ["EDINET_API_KEY"] = default_edinet_key
 
     if not default_edinet_key:
         api_key_input = st.text_input(
@@ -224,6 +235,18 @@ with st.sidebar:
         )
         if api_key_input:
             os.environ["EDINET_API_KEY"] = api_key_input
+            # Supabase app_config に永続保存
+            if _HAS_SUPABASE:
+                try:
+                    _sb = get_supabase()
+                    if _sb:
+                        _sb.table("app_config").upsert(
+                            {"key": "edinet_api_key", "value": api_key_input},
+                            on_conflict="key"
+                        ).execute()
+                        st.success("EDINET API KeyをDBに保存しました。次回以降は自動で読み込まれます。")
+                except Exception:
+                    pass
 
     search_days = st.slider("検索期間（日数）", 30, 730, 400, step=30,
                             help="EDINETを過去何日分検索するか（有報は決算後3ヶ月、半期報も同様に提出されるため、400日程度が推奨）")
