@@ -1289,6 +1289,7 @@ render();
                         edited['op_ltm'] = op if op != 0 else None
                         edited['ni_ltm'] = ni if ni != 0 else None
                         edited['da_ltm'] = da if da != 0 else company.get('da_ltm')
+                        edited['_da_ltm_original'] = _da_ltm_actual  # EBITDA簡便計算用に元値を常に保持
                         edited['ebitda_ltm'] = ebitda if ebitda != 0 else None
                         edited['cash'] = cash if cash != 0 else None
                         edited['total_debt'] = debt if debt != 0 else None
@@ -1307,8 +1308,7 @@ render();
 
             # フォーム送信時: EBITDA自動計算 + 予想値をSupabase + session_stateに保存
             if _form_submitted:
-                st.toast("データを反映中...", icon="⏳")
-                with st.spinner("データを反映中..."):
+                with st.status("データを反映中...", expanded=True) as _reflect_status:
                     # EBITDA予想を自動計算: 営業利益予想 + D&A（予想 or 直近年度末実績）
                     # ただしユーザーが手動でEBITDAを変更した場合はそちらを優先
                     if '_ebitda_calc' not in st.session_state:
@@ -1319,7 +1319,8 @@ render();
                         _code = ec.get('code', '')
                         _op = ec.get('op_forecast') or 0
                         _da = ec.get('da_forecast') or 0
-                        _da_actual = int(ec.get('da_ltm') or 0)
+                        # _da_ltm_original は company.get('da_ltm') の元値を常に保持
+                        _da_actual = int(ec.get('_da_ltm_original') or ec.get('da_ltm') or 0)
                         _used_actual = (_da == 0 and _da_actual > 0)
                         _da_use = _da if _da != 0 else _da_actual
                         _ebitda_calc = (_op + _da_use) if _op and _da_use else 0
@@ -1335,6 +1336,7 @@ render();
                         if _code and _ebitda_final > 0:
                             st.session_state._ebitda_calc[_code] = _ebitda_final
                             ec['ebitda_forecast'] = _ebitda_final
+                        st.write(f"{_code}: OP={_op:,}, D&A予想={_da:,}, D&A実績={_da_actual:,}, EBITDA={ec.get('ebitda_forecast', 0):,}")
                     if _HAS_SUPABASE:
                         for ec in edited_companies:
                             _code = ec.get('code', '')
@@ -1361,7 +1363,7 @@ render();
                                 except Exception:
                                     pass
                         _save_forecasts_cache(st.session_state.get('tanshin_forecasts', {}))
-                st.success("データを反映しました。予想値をデータベースに保存しました。")
+                    _reflect_status.update(label="データを反映しました。", state="complete")
 
             # --- Excel生成 ---
             st.divider()
