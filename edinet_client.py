@@ -585,6 +585,17 @@ def fetch_companies_batch(codes_4, days=90, progress_callback=None, use_cache=Tr
     else:
         codes_to_search = list(codes_4)
 
+    # Supabaseフォールバック: ローカルキャッシュがない企業をSupabaseから取得
+    if codes_to_search and _HAS_SUPABASE and use_cache:
+        still_missing = []
+        for code4 in codes_to_search:
+            sb_data = sb_load_edinet_data(code4)
+            if sb_data and (sb_data.get('yuho_data') or sb_data.get('hanki_data')):
+                results[code4] = sb_data
+            else:
+                still_missing.append(code4)
+        codes_to_search = still_missing
+
     # 全社キャッシュ済みならセッション作成もAPIキー読み込みも不要
     if not codes_to_search:
         return results
