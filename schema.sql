@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS tanshin_forecasts (
   UNIQUE(code, fy_month, period_type)
 );
 
+-- 6. app_config — アプリ設定（APIキー等の永続保存）
+CREATE TABLE IF NOT EXISTS app_config (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_financials_code ON financials(code);
 CREATE INDEX IF NOT EXISTS idx_edinet_meta_code ON edinet_meta(code);
