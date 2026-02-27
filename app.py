@@ -493,7 +493,9 @@ if generate_btn:
             valid_codes = []
             _need_yf_check = []
             for vc in codes:
-                if _cache_status[vc]['any']:
+                cs = _cache_status[vc]
+                if cs['any'] or cs.get('edinet') or cs.get('stock'):
+                    # ローカルキャッシュまたはSupabase補完で確認済み
                     valid_codes.append(vc)
                 else:
                     _need_yf_check.append(vc)

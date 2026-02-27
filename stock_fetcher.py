@@ -77,12 +77,23 @@ def _save_stock_cache(code_4, data):
 def validate_stock_code(code_4):
     """
     証券コードが東証に存在するか軽量チェック。
-    キャッシュがあれば即OK（yfinance不要）。
+    キャッシュ（ローカル/Supabase）があれば即OK（yfinance不要）。
     """
-    # キャッシュがあれば検証済みとみなす
+    # キャッシュがあれば検証済みとみなす（ローカル → Supabase）
     cached = _load_stock_cache(code_4)
     if cached:
         return True, cached.get('company_name_en', '')
+    # Supabase companies テーブルに存在すれば検証済み
+    if _HAS_SUPABASE:
+        try:
+            from supabase_client import get_supabase
+            sb = get_supabase()
+            if sb:
+                resp = sb.table("companies").select("code,name_en").eq("code", code_4).limit(1).execute()
+                if resp.data:
+                    return True, resp.data[0].get('name_en', '')
+        except Exception:
+            pass
 
     _disable_ssl_verification()
     try:
