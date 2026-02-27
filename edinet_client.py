@@ -90,8 +90,13 @@ ELEMENT_MAP = {
     'jpigp_cor:OperatingProfitLossIFRS': 'operating_income',
     'jpigp_cor:ProfitLossAttributableToOwnersOfParentIFRS': 'net_income',
     'jpigp_cor:ProfitLossIFRS': 'profit_loss',
-    # CF statement D&A
+    # CF statement D&A（米綴り Amortization + 英綴り Amortisation 両対応）
     'jpigp_cor:DepreciationAndAmortizationOpeCFIFRS': 'depreciation',
+    'jpigp_cor:DepreciationAndAmortisationIFRS': 'depreciation',  # 英綴り（住友商事等）
+    'jpigp_cor:DepreciationAndAmortisationExpenseIFRS': 'depreciation',
+    'jpigp_cor:DepreciationAndAmortizationIFRS': 'depreciation',
+    'jpigp_cor:DepreciationAmortisationAndImpairmentLossIFRS': 'depreciation',
+    'jpigp_cor:DepreciationAmortizationAndImpairmentLossIFRS': 'depreciation',
     # BS
     'jpigp_cor:CashAndCashEquivalentsIFRS': 'cash',
     'jpigp_cor:InvestmentSecuritiesIFRS': 'investment_securities',
