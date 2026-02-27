@@ -1202,7 +1202,10 @@ render();
                         _rev_e_default = int(tanshin.get('rev_forecast') or company.get('rev_forecast') or 0)
                         _op_e_default = int(tanshin.get('op_forecast') or company.get('op_forecast') or 0)
                         _ni_e_default = int(tanshin.get('ni_forecast') or company.get('ni_forecast') or 0)
-                        _ebitda_e_default = int(company.get('ebitda_forecast') or 0)
+                        # 減価償却費予想: デフォルトはLTM実績値
+                        _da_ltm_actual = int(company.get('da_ltm') or 0)
+                        _da_e_default = int(company.get('da_forecast') or _da_ltm_actual)
+                        _da_is_actual = (company.get('da_forecast') is None or company.get('da_forecast') == 0)
                         _dps_default = float(company.get('dps') or 0)  # 有報記載の実績配当
 
                         with col3:
@@ -1227,8 +1230,17 @@ render();
                                                    key=f"ope_{idx}", step=1, format="%d")
                             ni_e = st.number_input("純利益予想", value=_ni_e_default,
                                                    key=f"nie_{idx}", step=1, format="%d")
-                            ebitda_e = st.number_input("EBITDA予想", value=_ebitda_e_default,
-                                                       key=f"ebitdae_{idx}", step=1, format="%d")
+                            da_e = st.number_input(
+                                "減価償却費予想" + ("（終了年度実績）" if _da_is_actual and _da_e_default > 0 else ""),
+                                value=_da_e_default,
+                                key=f"dae_{idx}", step=1, format="%d")
+                            # EBITDA予想 = 営業利益予想 + 減価償却費予想（自動計算）
+                            ebitda_e = (op_e + da_e) if op_e and da_e else 0
+                            if ebitda_e > 0:
+                                _ebitda_label = f"EBITDA予想: **{ebitda_e:,}**"
+                                if _da_is_actual and da_e == _da_ltm_actual and _da_ltm_actual > 0:
+                                    _ebitda_label += "（D&Aは終了年度実績）"
+                                st.caption(_ebitda_label)
 
                         # --- 時価総額・EV・マルチプル自動計算 ---
                         mcap = int(stock_price * shares / 1000) if stock_price and shares else 0
@@ -1271,6 +1283,7 @@ render();
                         edited['rev_forecast'] = rev_e if rev_e != 0 else None
                         edited['op_forecast'] = op_e if op_e != 0 else None
                         edited['ni_forecast'] = ni_e if ni_e != 0 else None
+                        edited['da_forecast'] = da_e if da_e != 0 else None
                         edited['ebitda_forecast'] = ebitda_e if ebitda_e != 0 else None
                         edited.pop('_ev', None)
                         edited.pop('_multiples', None)
