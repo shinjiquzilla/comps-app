@@ -353,6 +353,17 @@ if generate_btn:
         st.session_state.company_data = []
         st.session_state.errors = []
         st.session_state.generation_done = False
+        # 前回のフォーム入力値・EBITDA計算値をクリア
+        st.session_state.pop('_ebitda_calc', None)
+        st.session_state.pop('_ebitda_approx', None)
+        for _k in list(st.session_state.keys()):
+            if any(_k.startswith(p) for p in (
+                'name_', 'acc_', 'fy_', 'price_', 'shares_',
+                'rev_', 'op_', 'ni_', 'da_', 'ebitda_', 'ebitdae_',
+                'cash_', 'debt_', 'eq_', 'dps_',
+                'reve_', 'ope_', 'nie_', 'dae_',
+            )):
+                del st.session_state[_k]
 
         progress_bar = st.progress(0)
         status_container = st.empty()
