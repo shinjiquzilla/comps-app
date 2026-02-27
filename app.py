@@ -1336,7 +1336,7 @@ render();
                         if _code and _ebitda_final > 0:
                             st.session_state._ebitda_calc[_code] = _ebitda_final
                             ec['ebitda_forecast'] = _ebitda_final
-                        st.write(f"{_code}: OP={_op:,}, D&A予想={_da:,}, D&A実績={_da_actual:,}, EBITDA={ec.get('ebitda_forecast', 0):,}")
+                        st.write(f"{_code}: OP={_op:,}, D&A予想={_da:,}, D&A実績={_da_actual:,}, EBITDA={ec.get('ebitda_forecast') or 0:,}")
                     if _HAS_SUPABASE:
                         for ec in edited_companies:
                             _code = ec.get('code', '')
