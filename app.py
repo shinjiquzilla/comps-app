@@ -1241,10 +1241,10 @@ render();
                                                    key=f"ope_{idx}", step=1, format="%d")
                             ni_e = st.number_input("純利益予想", value=_ni_e_default,
                                                    key=f"nie_{idx}", step=1, format="%d")
-                            da_e = st.number_input(
-                                "減価償却費予想（予想が存在せず0のままとすると直近年度末の減価償却費で簡便的に計算します）",
+                            da_e = st.number_input("減価償却費予想",
                                 value=_da_e_default,
                                 key=f"dae_{idx}", step=1, format="%d")
+                            st.caption("予想が存在せず0のままとすると直近年度末の減価償却費で簡便的に計算します")
                             # EBITDA予想 = 営業利益予想 + 減価償却費（予想 or 直近年度末実績）
                             _da_for_ebitda = da_e if da_e and da_e != 0 else _da_ltm_actual
                             ebitda_e = (op_e + _da_for_ebitda) if op_e and _da_for_ebitda else 0
