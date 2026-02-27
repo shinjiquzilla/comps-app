@@ -23,6 +23,16 @@ from pathlib import Path
 import requests
 import urllib3
 
+# Supabase client (optional)
+try:
+    from supabase_client import (
+        load_edinet_data as sb_load_edinet_data,
+        save_edinet_data as sb_save_edinet_data,
+    )
+    _HAS_SUPABASE = True
+except ImportError:
+    _HAS_SUPABASE = False
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -609,6 +619,11 @@ def fetch_companies_batch(codes_4, days=90, progress_callback=None, use_cache=Tr
 def _process_docs_for_company(session, api_key, code_4, docs, use_cache=True):
     """1社分の書類リストからCSVダウンロード・パースを行う。キャッシュ対応。"""
     if not docs:
+        # ローカルにドキュメントリストがなくてもSupabaseに財務データがある可能性
+        if _HAS_SUPABASE and use_cache:
+            sb_data = sb_load_edinet_data(code_4)
+            if sb_data and (sb_data.get('yuho_data') or sb_data.get('hanki_data')):
+                return sb_data
         return {
             'company_name': '',
             'yuho_data': {},
@@ -685,7 +700,20 @@ def _process_docs_for_company(session, api_key, code_4, docs, use_cache=True):
 
         if zip_bytes is None:
             if session is None or api_key is None:
-                # セッションなし（全社キャッシュモード）でパース結果もZIPもない → スキップ
+                # セッションなし（全社キャッシュモード）でパース結果もZIPもない
+                # → Supabase をフォールバックとして試行
+                if _HAS_SUPABASE and use_cache:
+                    sb_data = sb_load_edinet_data(code_4)
+                    if sb_data:
+                        if doc_type == 'yuho' and sb_data.get('yuho_data'):
+                            result['yuho_data'] = sb_data['yuho_data']
+                            debug_info['yuho_supabase'] = True
+                        elif doc_type == 'hanki':
+                            if sb_data.get('hanki_data'):
+                                result['hanki_data'] = sb_data['hanki_data']
+                            if sb_data.get('hanki_prior_data'):
+                                result['hanki_prior_data'] = sb_data['hanki_prior_data']
+                            debug_info['hanki_supabase'] = True
                 continue
             zip_bytes = download_csv_zip(session, api_key, doc_id)
             time.sleep(1)
@@ -739,4 +767,13 @@ def _process_docs_for_company(session, api_key, code_4, docs, use_cache=True):
                     pass  # PDF取得失敗は非致命的
 
     result['_debug'] = debug_info
+
+    # Supabase にデータを保存
+    if _HAS_SUPABASE and use_cache:
+        if result.get('yuho_data') or result.get('hanki_data'):
+            try:
+                sb_save_edinet_data(code_4, result)
+            except Exception:
+                pass
+
     return result

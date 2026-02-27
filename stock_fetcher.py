@@ -22,6 +22,16 @@ os.environ['REQUESTS_CA_BUNDLE'] = ''
 
 import yfinance as yf
 
+# Supabase client (optional)
+try:
+    from supabase_client import (
+        load_stock_data as sb_load_stock_data,
+        save_stock_data as sb_save_stock_data,
+    )
+    _HAS_SUPABASE = True
+except ImportError:
+    _HAS_SUPABASE = False
+
 
 def _disable_ssl_verification():
     """SSL検証を無効化（社内ネットワーク対応）。"""
@@ -33,13 +43,21 @@ _STOCK_CACHE_DIR = Path(__file__).parent / "data" / "stock"
 
 
 def _load_stock_cache(code_4):
-    """キャッシュがあれば読み込む。なければNone。"""
+    """キャッシュがあれば読み込む。ローカル → Supabase の順。なければNone。"""
     cache_file = _STOCK_CACHE_DIR / code_4 / "stock.json"
     if cache_file.exists():
         try:
             return json.loads(cache_file.read_text(encoding='utf-8'))
         except Exception:
-            return None
+            pass
+    # Supabase フォールバック
+    if _HAS_SUPABASE:
+        try:
+            sb_data = sb_load_stock_data(code_4)
+            if sb_data and sb_data.get('stock_price') is not None:
+                return sb_data
+        except Exception:
+            pass
     return None
 
 
@@ -147,6 +165,12 @@ def fetch_stock_info(code_4, max_retries=3, use_cache=True):
                 'company_name_en': info.get('shortName', ''),
             }
             _save_stock_cache(code_4, result)
+            # Supabase にも保存
+            if _HAS_SUPABASE:
+                try:
+                    sb_save_stock_data(code_4, result)
+                except Exception:
+                    pass
             return result
 
         except Exception as e:

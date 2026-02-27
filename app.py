@@ -34,6 +34,20 @@ from financial_calc import build_company_data
 from comps_generator import generate_comps
 from tanshin_parser import parse_tanshin_pdf, save_tanshin_pdf, identify_tanshin_pdf
 
+# Supabase client (optional)
+try:
+    from supabase_client import (
+        get_supabase, load_forecasts, save_all_forecasts, save_forecast,
+        upload_tanshin_pdf as sb_upload_tanshin_pdf,
+        load_edinet_data as sb_load_edinet_data,
+        save_edinet_data as sb_save_edinet_data,
+        load_stock_data as sb_load_stock_data,
+        save_stock_data as sb_save_stock_data,
+    )
+    _HAS_SUPABASE = True
+except ImportError:
+    _HAS_SUPABASE = False
+
 # ---------------------------------------------------------------------------
 # 決算短信 予想値の永続キャッシュ（data/tanshin_forecasts.json）
 # ---------------------------------------------------------------------------
@@ -44,7 +58,29 @@ _FORECASTS_FILE = _Path(__file__).parent / "data" / "tanshin_forecasts.json"
 
 
 def _load_forecasts_cache():
-    """永続キャッシュから予想値を読み込む。"""
+    """Supabase優先、JSONフォールバックで予想値を読み込む。"""
+    # 1. Supabase から読み込み
+    if _HAS_SUPABASE:
+        try:
+            sb_data = load_forecasts()
+            if sb_data:
+                # ローカルJSONも更新（フォールバック用）
+                try:
+                    _FORECASTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    # ローカルとマージ（Supabase側を優先）
+                    local = {}
+                    if _FORECASTS_FILE.exists():
+                        local = _json.loads(_FORECASTS_FILE.read_text(encoding='utf-8'))
+                    local.update(sb_data)
+                    _FORECASTS_FILE.write_text(
+                        _json.dumps(local, ensure_ascii=False, indent=2), encoding='utf-8')
+                    return local
+                except Exception:
+                    return sb_data
+        except Exception:
+            pass
+
+    # 2. ローカルJSONフォールバック
     if _FORECASTS_FILE.exists():
         try:
             return _json.loads(_FORECASTS_FILE.read_text(encoding='utf-8'))
@@ -54,13 +90,20 @@ def _load_forecasts_cache():
 
 
 def _save_forecasts_cache(forecasts):
-    """予想値を永続キャッシュに保存。"""
+    """Supabase + ローカルJSON の両方に保存。"""
+    # ローカルJSON
     try:
         _FORECASTS_FILE.parent.mkdir(parents=True, exist_ok=True)
         _FORECASTS_FILE.write_text(
             _json.dumps(forecasts, ensure_ascii=False, indent=2), encoding='utf-8')
     except Exception:
         pass
+    # Supabase
+    if _HAS_SUPABASE:
+        try:
+            save_all_forecasts(forecasts)
+        except Exception:
+            pass
 
 # ---------------------------------------------------------------------------
 # Page Config
@@ -313,6 +356,24 @@ if generate_btn:
             cs['edinet'] and cs['stock'] for cs in _cache_status.values()
         )
 
+        # ---- Supabase補完: ローカルキャッシュがない企業をSupabaseから読む ----
+        if not _all_fully_cached and _HAS_SUPABASE and use_cache:
+            for _c in codes:
+                cs = _cache_status[_c]
+                if not cs['edinet']:
+                    _sb_edinet = sb_load_edinet_data(_c)
+                    if _sb_edinet and (_sb_edinet.get('yuho_data') or _sb_edinet.get('hanki_data')):
+                        cs['edinet'] = True
+                        cs['_sb_edinet'] = _sb_edinet
+                if not cs['stock']:
+                    _sb_stock = sb_load_stock_data(_c)
+                    if _sb_stock and _sb_stock.get('stock_price'):
+                        cs['stock'] = True
+                        cs['_sb_stock'] = _sb_stock
+            _all_fully_cached = all(
+                cs['edinet'] and cs['stock'] for cs in _cache_status.values()
+            )
+
         # ---- 完全キャッシュパス: 外部API一切なし ----
         if _all_fully_cached and use_cache:
             progress_bar = st.progress(0)
@@ -322,9 +383,15 @@ if generate_btn:
             status_container.info(f"⚡ 全{len(codes)}社のデータをローカルキャッシュから読み込み中...")
             progress_bar.progress(0.3)
 
-            # EDINETデータをパース済みJSONから直接読み込み
+            # EDINETデータをパース済みJSONから直接読み込み（Supabaseフォールバック付き）
             edinet_results = {}
             for code in codes:
+                # Supabase からのデータがあればそちらを使う
+                _sb_data = _cache_status.get(code, {}).get('_sb_edinet')
+                if _sb_data:
+                    edinet_results[code] = _sb_data
+                    continue
+
                 code_dir = _edinet_base / code
                 meta = load_cached_meta(code)
                 company_name = ""
@@ -371,14 +438,16 @@ if generate_btn:
 
             progress_bar.progress(0.6)
 
-            # 株価データをJSONから直接読み込み＆計算
+            # 株価データをJSONから直接読み込み＆計算（Supabaseフォールバック付き）
             results = []
             for i, code in enumerate(codes):
                 edinet_data = edinet_results.get(code, {
                     'company_name': '', 'yuho_data': {}, 'hanki_data': {},
                     'yuho_doc': None, 'hanki_doc': None,
                 })
-                stock_data = _load_stock_cache(code) or {
+                # Supabase からの株価データがあればそちらを使う
+                _sb_stk = _cache_status.get(code, {}).get('_sb_stock')
+                stock_data = _sb_stk or _load_stock_cache(code) or {
                     'stock_price': None, 'shares_outstanding': None,
                     'market_cap': None, 'company_name_en': '',
                 }
@@ -533,6 +602,16 @@ if generate_btn:
                 except Exception as e:
                     result['errors'].append(f"計算: {e}")
                     result['status'] = 'error'
+
+                # Supabase にデータを保存
+                if _HAS_SUPABASE:
+                    try:
+                        if edinet_data.get('yuho_data') or edinet_data.get('hanki_data'):
+                            sb_save_edinet_data(code, edinet_data)
+                        if stock_data.get('stock_price') is not None:
+                            sb_save_stock_data(code, stock_data)
+                    except Exception:
+                        pass
 
                 if result['errors']:
                     for err in result['errors']:
@@ -894,6 +973,11 @@ render();
                     if code and code in candidate_codes:
                         parsed = parse_tanshin_pdf(ir['pdf_bytes'])
                         if parsed:
+                            # 期間情報を追加（identify_tanshin_pdfの判定結果から）
+                            if ident.get('fy_end'):
+                                parsed['fy_month'] = ident['fy_end']
+                            if ident.get('period_type'):
+                                parsed['period_type'] = ident['period_type']
                             st.session_state.tanshin_forecasts[code] = parsed
                             _parsed_count += 1
                         else:
@@ -903,8 +987,23 @@ render();
                             save_tanshin_pdf(ir['pdf_bytes'], code, save_name)
                         except Exception:
                             pass
+                        # Supabase Storage にもアップロード
+                        if _HAS_SUPABASE:
+                            try:
+                                sb_upload_tanshin_pdf(code, save_name, ir['pdf_bytes'])
+                            except Exception:
+                                pass
                 if _parsed_count:
                     _save_forecasts_cache(st.session_state.tanshin_forecasts)
+                    # Supabase にも個別保存
+                    if _HAS_SUPABASE:
+                        for ir in id_results:
+                            _ir_code = ir['identification']['code_4']
+                            if _ir_code and _ir_code in st.session_state.tanshin_forecasts:
+                                try:
+                                    save_forecast(_ir_code, st.session_state.tanshin_forecasts[_ir_code])
+                                except Exception:
+                                    pass
                     st.success(f"✅ {_parsed_count}件の業績予想を抽出しました。")
                 for _pf_code, _pf_name, _pf_file, _pf_bytes in _parse_failures:
                     st.warning(

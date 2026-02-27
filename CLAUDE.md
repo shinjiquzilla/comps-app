@@ -20,7 +20,10 @@ streamlit run app.py
 | `stock_fetcher.py` | yfinance株価取得＋証券コード検証＋永続キャッシュ | `fetch_stock_info()`, `validate_stock_code()` |
 | `financial_calc.py` | LTM・EBITDA・EV・マルチプル計算 | `build_company_data()` |
 | `comps_generator.py` | Excel Comps表生成（openpyxl） | `generate_comps(config, path)` |
+| `supabase_client.py` | Supabase DB/Storage ラッパー（全データの永続化） | `load_edinet_data()`, `load_stock_data()`, `load_forecasts()` |
 | `auth.py` | Supabase GoTrue認証（オプション・無効化済み） | — |
+| `schema.sql` | PostgreSQLテーブル定義（5テーブル） | — |
+| `migrate_to_supabase.py` | ローカルdata/ → Supabase一括移行スクリプト | — |
 
 ## データフロー
 ```
@@ -34,39 +37,56 @@ streamlit run app.py
 - **EDINET CSV**: 元データは円単位 → `edinet_client.py`で百万円に変換
 - **yfinance**: marketCapは円 → `stock_fetcher.py`で百万円に変換
 
-## キャッシュ階層（3段階）＋完全オフラインパス
+## データ永続化: Supabase + ローカルキャッシュ
 
-全データをgitに永続化し、reboot/再デプロイ後もAPI再取得なしで即座にデータ利用可能。
-**全社キャッシュ済みの場合、外部API（EDINET/yfinance）を一切呼ばない完全オフラインパスで処理。**
-`fetch_companies_batch()`や`fetch_stock_info()`すら呼ばず、ファイルI/Oのみで完結する。
+### Supabase（メインデータストア）
+全データは Supabase PostgreSQL + Storage に永続保存。Streamlit Cloud の再起動やgit管理の制約に依存しない。
+- **プロジェクト**: `fuugtyvluxegzrdlfeml.supabase.co`（Quzilla Capital DevOps）
+- **接続**: `.streamlit/secrets.toml` の `[supabase]` セクション（url + anon_key）
+- **RLS**: 現時点では未設定（anon keyで全アクセス可）
 
-### 1. EDINETキャッシュ (`data/edinet/{code_4}/`)
-- `meta.json`: 書類リスト（docID, periodEnd等）
-- `yuho_*.zip` / `hanki_*.zip`: EDINET CSV ZIPファイル
-- `yuho_*.pdf` / `hanki_*.pdf`: 有報・半期報PDF
-- **`yuho_parsed.json` / `hanki_parsed.json`**: CSVパース結果（最優先で読み込み、ZIP解凍不要）
-- gitに永続化済み → Streamlit Cloud reboot後もAPI不要
+### テーブル構成（`schema.sql`）
+| テーブル | 用途 | ユニーク制約 |
+|---------|------|------------|
+| `companies` | 企業マスター | `code` |
+| `edinet_meta` | EDINET書類メタデータ | `doc_id` |
+| `financials` | パース済み財務データ（raw_data JSONBに全項目保持） | `(code, doc_type, period_end)` |
+| `stock_data` | 株価データ（日次） | `(code, fetched_date)` |
+| `tanshin_forecasts` | 業績予想（**決算期×四半期ごとに履歴保持**） | `(code, fy_month, period_type)` |
 
-### 2. 株価キャッシュ (`data/stock/{code_4}/`)
-- `stock.json`: 永続キャッシュ（gitにコミットして保持）
-- キャッシュがあればyfinanceアクセスをスキップ
-- 株価更新はサイドバーの「キャッシュクリア」で明示的に実行
+### Storage
+- **バケット**: `tanshin-pdfs`（Private）
+- **パス構造**: `{code}/{filename}` (例: `6963/tanshin_2026-03_Q3.pdf`)
 
-### 3. 決算短信 (`data/tanshin/{code_4}/`)
-- `tanshin_{YYYY-MM}_{FY|Q1|Q2|Q3}.pdf`: アップロードPDF
-- `data/tanshin_forecasts.json`: 全社の業績予想パース結果（永続キャッシュ）
-- gitに永続化済み → 再アップロード不要、起動時に自動パース
+### 予想値の履歴保持
+`tanshin_forecasts` は `UNIQUE(code, fy_month, period_type)` で、同一企業でも決算期×四半期ごとに別レコード。
+過去の予想推移を遡って検証可能（例: 2027年3月期のQ1→Q2→Q3→FY確定の各予想値）。
+`load_forecasts()` は各社の最新予想のみ返す（Forward PER計算用）。
+`load_forecast_history(code)` で全履歴を取得可能。
+
+### ローカルキャッシュ（フォールバック＋高速パス）
+ローカル `data/` ディレクトリはSupabase障害時・オフライン開発時のフォールバックとして残す。
+
+### データ読み込み優先順位
+```
+1. ローカル _parsed.json / stock.json（最速）
+2. Supabase DB（ローカルにない場合のフォールバック）
+3. EDINET API / yfinance（両方にない場合のみ）
+```
+
+### データ書き込み
+EDINET取得・株価取得・決算短信アップロード時に**ローカル + Supabase の両方に自動保存**。
+git commit & pushによるデータ永続化は不要。
+
+### 新しい企業を追加する手順
+1. アプリで証券コードを入力して生成 → EDINET/yfinanceから自動取得
+2. 決算短信PDFをアップロード → 自動パース
+3. **データはSupabaseに自動保存される**（git pushは不要だが、コードの変更がある場合はpush）
 
 ### 完全オフラインパスの仕組み
 `app.py`の生成ロジックは2つのパスに分岐:
-1. **完全キャッシュパス** (`_all_fully_cached=True`): `data/edinet/`の`_parsed.json`と`data/stock/`の`stock.json`から直接データを組み立て。`fetch_companies_batch()`、`fetch_stock_info()`、`validate_stock_code()`等の関数呼び出し自体をスキップ。HTTPセッション作成・APIキー読み込みも不要。
-2. **通常パス**: キャッシュミスがある企業のみEDINET/yfinanceにアクセス。
-
-### 新しい企業を追加する手順
-Streamlit Cloudの一時ファイルシステムではランタイム中に生成されたキャッシュは再起動で消える。新企業の追加手順:
-1. **ローカルでデータ取得**: `fetch_companies_batch(['XXXX'], days=400)` + `fetch_stock_info('XXXX')`
-2. **決算短信をローカルでパース**: `parse_tanshin_pdf()` → `tanshin_forecasts.json` 更新
-3. **gitにコミット＆プッシュ**: `data/edinet/XXXX/`, `data/stock/XXXX/`, `data/tanshin/XXXX/`, `data/tanshin_forecasts.json`
+1. **完全キャッシュパス** (`_all_fully_cached=True`): ローカル`_parsed.json`/`stock.json`、またはSupabaseからデータを組み立て。外部API不要。
+2. **通常パス**: キャッシュミスがある企業のみEDINET/yfinanceにアクセス → 取得後にSupabase + ローカルに保存。
 
 ### 証券コード検証のキャッシュ活用
 Step 0の検証で以下のいずれかがあればyfinance検証をスキップ:
@@ -161,7 +181,7 @@ python comps_generator.py config.json output.xlsx
 config形式は`comps_generator.py`冒頭のdocstringを参照。
 
 ## 依存ライブラリ
-streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
+streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supabase
 
 ## キャッシュ済み対象企業
 
@@ -195,7 +215,7 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 - pushすると自動デプロイ
 
 ## Streamlit Cloud固有の注意点
-- **一時ファイルシステム**: ランタイム中に生成されたファイルは再起動/再デプロイで消失。キャッシュはgitに永続化が必須。
+- **一時ファイルシステム**: ランタイム中に生成されたファイルは再起動/再デプロイで消失。Supabase移行後はDBから自動復元されるためgit永続化は不要。
 - **`st.rerun()` は使わない**: Cloud環境ではst.rerun()がsession state消失を引き起こす場合がある。生成後の結果表示はsession stateフラグ（generation_done）で制御
 - **session stateの肥大化に注意**: 大データをsession stateに入れるとメモリ圧迫→アプリ再起動→session state消失のリスク
 - **結果表示セクションはtry-exceptでラップ**: エラー時にサイレントに元の画面に戻る問題を防止
@@ -210,6 +230,7 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
+| 2026/2/27 | — | Supabase移行: 全データをPostgreSQL+Storageに永続化、予想値履歴保持、ローカルキャッシュフォールバック |
 | 2026/2/27 | — | UIリニューアル: 白背景+水色アクセント(#45b5e6)、絵文字→Unicode記号、決算月列追加、決算短信不足検出ロジック改善、決算月動的判定 |
 | 2026/2/27 | bc02efc | 7550ゼンショー決算短信Q1追加、ルートPDF整理 |
 | 2026/2/27 | 1f31cff | IFRS/12月決算企業対応バグ修正7件 + 新3社(7550,2702,3197)データ追加 |
