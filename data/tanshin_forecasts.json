@@ -18,5 +18,10 @@
     "rev_forecast": 40000,
     "op_forecast": 1000,
     "ni_forecast": 300
+  },
+  "7550": {
+    "rev_forecast": 1223500,
+    "op_forecast": 82000,
+    "ni_forecast": 42500
   }
 }
