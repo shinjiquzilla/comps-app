@@ -425,14 +425,23 @@ def identify_tanshin_pdf(pdf_bytes, candidate_codes):
         result['fy_end'] = f"{year}-{month:02d}"
 
     # --- 期間種別検出 ---
-    # 「第X四半期」「第Ｘ四半期」を検出
-    if re.search(r'第[1１]四半期', text):
-        result['period_type'] = 'Q1'
-    elif re.search(r'第[2２]四半期', text):
-        result['period_type'] = 'Q2'
-    elif re.search(r'第[3３]四半期', text):
-        result['period_type'] = 'Q3'
-    else:
+    # タイトル行（「第X四半期決算短信」）から判定。
+    # テキスト全体の「第X四半期」で判定するとQ3決算短信内のQ1/Q2参照に誤マッチする。
+    _period_detected = False
+    for line in lines:
+        if '決算短信' in line:
+            m_q = re.search(r'第([1-3１-３])四半期.*決算短信', line)
+            if m_q:
+                q_num = m_q.group(1).replace('１', '1').replace('２', '2').replace('３', '3')
+                result['period_type'] = f'Q{q_num}'
+                _period_detected = True
+                break
+            elif '通期' not in line and not re.search(r'四半期', line[:line.index('決算短信')]):
+                # 「四半期」が決算短信の前になければ通期
+                result['period_type'] = 'FY'
+                _period_detected = True
+                break
+    if not _period_detected:
         result['period_type'] = 'FY'
 
     # --- ファイル名生成 ---

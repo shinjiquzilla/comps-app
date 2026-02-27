@@ -1009,6 +1009,10 @@ render();
                 with st.expander(f"▸ 保存済み決算短信（{len(_existing_files)}件）", expanded=False):
                     st.dataframe(pd.DataFrame(_existing_files), use_container_width=True, hide_index=True)
 
+            st.divider()
+            if st.button("▶ サマリーテーブルを再生成", type="primary"):
+                st.rerun()
+
             # --- 手動補完セクション ---
             st.subheader("手動データ補完")
 
