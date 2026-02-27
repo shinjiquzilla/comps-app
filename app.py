@@ -359,6 +359,10 @@ if generate_btn:
             cs['edinet'] and cs['stock'] for cs in _cache_status.values()
         )
 
+        # デバッグ: キャッシュ状況を表示
+        _debug_cache = {c: {k: v for k, v in s.items() if k in ('edinet','stock')} for c, s in _cache_status.items()}
+        status_container.info(f"キャッシュ確認中... ローカル={_debug_cache}, Supabase={_HAS_SUPABASE}")
+
         # ---- Supabase補完: ローカルキャッシュがない企業をSupabaseから読む ----
         if not _all_fully_cached and _HAS_SUPABASE and use_cache:
             for _c in codes:
@@ -376,6 +380,8 @@ if generate_btn:
             _all_fully_cached = all(
                 cs['edinet'] and cs['stock'] for cs in _cache_status.values()
             )
+            _debug_sb = {c: {k: v for k, v in s.items() if k in ('edinet','stock')} for c, s in _cache_status.items()}
+            status_container.info(f"Supabase補完後: {_debug_sb}, fully_cached={_all_fully_cached}")
 
         # ---- 完全キャッシュパス: 外部API一切なし ----
         if _all_fully_cached and use_cache:
