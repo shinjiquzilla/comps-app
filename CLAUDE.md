@@ -249,6 +249,7 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supaba
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
+| 2026/2/27 | — | フッターからバージョン番号を削除（git履歴で十分なため） |
 | 2026/2/27 | 9555d29 | IFRS D&A: DepreciationExpenseOpeCFIFRS追加（三菱商事等の総合商社対応） |
 | 2026/2/27 | — | EBITDA予想をst.metric表示に変更（st.form内widget更新制約の回避） |
 | 2026/2/27 | — | Comps再生成時にsession_stateのフォーム関連キーをクリア（前回値のリーク防止） |
