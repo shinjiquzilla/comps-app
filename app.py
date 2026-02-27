@@ -1195,7 +1195,8 @@ render();
 
             edited_companies = []
 
-            with st.form("manual_edit_form"):
+            _form_version = st.session_state.get('_form_version', 0)
+            with st.form(f"manual_edit_form_v{_form_version}"):
                 tabs = st.tabs([f"  {c.get('code', '')}  {c.get('name', '')}  " for c in companies_for_config])
 
                 for idx, (tab, company) in enumerate(zip(tabs, companies_for_config)):
@@ -1334,26 +1335,21 @@ render();
             # フォーム送信時: EBITDA自動計算 + 予想値をSupabase + session_stateに保存
             if _form_submitted:
                 print(f"[FORM_SUBMIT] edited_companies count={len(edited_companies)}")
-                st.info("データを反映中...")
                 # EBITDA予想を自動計算: 営業利益予想 + D&A（予想 or 直近年度末実績）
-                # ただしユーザーが手動でEBITDAを変更した場合はそちらを優先
                 if '_ebitda_calc' not in st.session_state:
                     st.session_state['_ebitda_calc'] = {}
                 if '_ebitda_approx' not in st.session_state:
                     st.session_state['_ebitda_approx'] = {}
-                _ebitda_messages = []
                 for ec in edited_companies:
                     _code = ec.get('code', '')
                     _op = ec.get('op_forecast') or 0
                     _da = ec.get('da_forecast') or 0
-                    # _da_ltm_original は company.get('da_ltm') の元値を常に保持
                     _da_actual = int(ec.get('_da_ltm_original') or ec.get('da_ltm') or 0)
                     print(f"[EBITDA_CALC] {_code}: op={_op}, da_forecast={_da}, da_actual={_da_actual}")
                     _used_actual = (_da == 0 and _da_actual > 0)
                     _da_use = _da if _da != 0 else _da_actual
                     _ebitda_calc = (_op + _da_use) if _op and _da_use else 0
                     _ebitda_manual = ec.get('ebitda_forecast') or 0
-                    # 手動入力値と自動計算値が異なる場合、手動値を尊重
                     _ebitda_prev = st.session_state['_ebitda_calc'].get(_code, 0)
                     if _ebitda_manual and _ebitda_manual != _ebitda_prev and _ebitda_manual != _ebitda_calc:
                         _ebitda_final = _ebitda_manual
@@ -1365,12 +1361,6 @@ render();
                         st.session_state['_ebitda_calc'][_code] = _ebitda_final
                         ec['ebitda_forecast'] = _ebitda_final
                     print(f"[EBITDA_CALC] {_code}: ebitda_final={_ebitda_final}")
-                    if _ebitda_final > 0:
-                        _ebitda_messages.append(f"  {_code}: EBITDA予想 = {_ebitda_final:,}（OP {_op:,} + D&A {_da_use:,}）")
-                    elif _op and _da_actual == 0:
-                        _ebitda_messages.append(f"  {_code}: D&A実績が未取得のためEBITDA予想を計算できません。PLセクションの「減価償却費」を手入力してください。")
-                for _msg in _ebitda_messages:
-                    st.write(_msg)
                 if _HAS_SUPABASE:
                     for ec in edited_companies:
                         _code = ec.get('code', '')
@@ -1394,7 +1384,14 @@ render();
                             except Exception:
                                 pass
                     _save_forecasts_cache(st.session_state.get('tanshin_forecasts', {}))
-                st.success("データを反映しました。")
+                # フォームを再生成してEBITDAボックスに計算値を反映
+                st.session_state['_form_version'] = _form_version + 1
+                st.session_state['_form_reflected'] = True
+                st.rerun()
+
+            # rerun後のトースト通知
+            if st.session_state.pop('_form_reflected', False):
+                st.toast("データを反映しました。", icon="✅")
 
             # --- Excel生成 ---
             st.divider()
