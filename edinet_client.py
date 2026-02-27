@@ -451,6 +451,7 @@ def extract_financial_data(zip_bytes, include_prior=False):
 
     result = {}
     prior_result = {}
+    _unmatched_debug = []
 
     # 当期（有報: 当期/当期末、半期報: 当中間期/当中間期末、四半期報: 当四半期累計期間/当四半期会計期間末）
     current_periods = ('当期', '当期末', '当中間期', '当中間期末',
@@ -508,7 +509,7 @@ def extract_financial_data(zip_bytes, include_prior=False):
             _ln = element_id.lower()
             if any(kw in _ln for kw in ('operat', 'depreci', 'amortis', 'amortiz')):
                 _label = clean(parts[1]) if len(parts) > 1 else ''
-                print(f"[EDINET_UNMATCH] {element_id} | {_label} | {relative_year} | {consolidated} | val={value_str}")
+                _unmatched_debug.append(element_id + " | " + _label + " | " + relative_year + " | val=" + value_str)
             continue
 
         # 格納先を選択
@@ -545,7 +546,8 @@ def extract_financial_data(zip_bytes, include_prior=False):
                 target[key] = val
 
     if include_prior:
-        return {'current': result, 'prior': prior_result}
+        return {'current': result, 'prior': prior_result, '_unmatched': _unmatched_debug}
+    result['_unmatched'] = _unmatched_debug
     return result
 
 
@@ -774,6 +776,7 @@ def _process_docs_for_company(session, api_key, code_4, docs, use_cache=True):
                 parsed = extract_financial_data(zip_bytes, include_prior=True)
                 result['hanki_data'] = parsed['current']
                 result['hanki_prior_data'] = parsed['prior']
+                result.setdefault('_unmatched', []).extend(parsed.get('_unmatched', []))
                 debug_info['hanki_prior_keys'] = list(parsed['prior'].keys())
                 # パース結果をキャッシュ保存
                 if parsed_cache_file:
@@ -786,6 +789,7 @@ def _process_docs_for_company(session, api_key, code_4, docs, use_cache=True):
                         pass
             else:
                 parsed_data = extract_financial_data(zip_bytes)
+                result.setdefault('_unmatched', []).extend(parsed_data.pop('_unmatched', []))
                 result[f'{doc_type}_data'] = parsed_data
                 if parsed_cache_file:
                     try:

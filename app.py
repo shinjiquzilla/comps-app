@@ -397,8 +397,8 @@ if generate_btn:
         )
         _cs_parts = []
         for _c, _s in _cache_status.items():
-            _cs_parts.append(_c + ": e=" + str(_s['edinet']) + " s=" + str(_s['stock']))
-        print("[CACHE_CHECK] local_all_cached=" + str(_all_fully_cached) + ", status=" + ', '.join(_cs_parts))
+            _cs_parts.append(_c + ": edinet=" + str(_s['edinet']) + " stock=" + str(_s['stock']))
+        st.caption("[DEBUG] cache: " + str(_all_fully_cached) + " | " + ', '.join(_cs_parts))
 
         # ---- Supabase補完: ローカルキャッシュがない企業をSupabaseから読む ----
         if not _all_fully_cached and _HAS_SUPABASE and use_cache:
@@ -418,7 +418,7 @@ if generate_btn:
             _all_fully_cached = all(
                 cs['edinet'] and cs['stock'] for cs in _cache_status.values()
             )
-            print(f"[CACHE_CHECK] after_supabase: all_cached={_all_fully_cached}")
+            st.caption("[DEBUG] after supabase: all_cached=" + str(_all_fully_cached))
 
         # ---- 完全キャッシュパス: 外部API一切なし ----
         _init_status.empty()
@@ -727,6 +727,12 @@ if st.session_state.generation_done:
                         'hanki_doc_id': ed.get('hanki_doc', {}).get('docID') if ed.get('hanki_doc') else None,
                         '_debug': ed.get('_debug', {}),
                     })
+                    # 未マッチの営業利益・減価償却費関連要素を表示
+                    _um = ed.get('_unmatched', [])
+                    if _um:
+                        st.warning("未マッチ要素（営業利益・減価償却費関連）:")
+                        for _u in _um:
+                            st.text(_u)
                 else:
                     st.text("EDINET: データなし")
                 if r.get('stock_raw'):
