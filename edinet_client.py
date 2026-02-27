@@ -92,6 +92,7 @@ ELEMENT_MAP = {
     'jpigp_cor:ProfitLossIFRS': 'profit_loss',
     # CF statement D&A（米綴り Amortization + 英綴り Amortisation 両対応）
     'jpigp_cor:DepreciationAndAmortizationOpeCFIFRS': 'depreciation',
+    'jpigp_cor:DepreciationExpenseOpeCFIFRS': 'depreciation',  # 三菱商事等: 減価償却費(CF)
     'jpigp_cor:DepreciationAndAmortizationOfIntangibleAssetsOpeCFIFRS': 'depreciation',  # 住友商事等: 減価償却費及び無形資産償却費
     'jpigp_cor:DepreciationAndAmortisationIFRS': 'depreciation',
     'jpigp_cor:DepreciationAndAmortisationExpenseIFRS': 'depreciation',
