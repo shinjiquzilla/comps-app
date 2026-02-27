@@ -219,6 +219,12 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supaba
 | 2702 | 日本マクドナルドホールディングス | J-GAAP | 12月 | OK | OK | — |
 | 3197 | すかいらーくホールディングス | IFRS | 12月 | OK | OK | — |
 
+### Comps Set 4（総合商社）
+| コード | 会社名 | 会計基準 | 決算期 | EDINET | 株価 | 決算短信 | 備考 |
+|--------|--------|---------|--------|--------|------|---------|------|
+| 8053 | 住友商事 | IFRS | 3月 | OK | OK | — | |
+| 8058 | 三菱商事 | IFRS | 3月 | OK | OK | — | 営業利益はEDINET CSV非収録→手動入力 |
+
 ## デプロイ
 - **Streamlit Cloud**: `shinjiquzilla/comps-app` リポジトリ main ブランチ連携
 - **URL**: `comps-app-msdep7hegjdzmqjr3r4smg.streamlit.app`
