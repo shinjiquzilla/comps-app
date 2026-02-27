@@ -1244,16 +1244,17 @@ render();
                                 value=_da_e_default,
                                 key=f"dae_{idx}", step=1, format="%d")
                             st.caption("減価償却費予想が存在しない場合、0のままとすると、直近年度末の減価償却費を使って簡便的にEBITDA予想を計算します")
-                            # EBITDA予想: 保存値 → 自動計算(OP予想+D&A実績) → 0 の優先順
+                            # EBITDA予想: DB/session_state保存値があればそれ、なければ0
                             _code_for_ebitda = company.get('code', '')
                             _ebitda_e_saved = st.session_state.get('_ebitda_calc', {}).get(_code_for_ebitda, 0)
-                            # ウィジェット値ではなくデフォルト値から直接計算（session_stateキャッシュの影響を回避）
-                            _da_for_auto = _da_e_default if _da_e_default != 0 else _da_ltm_actual
-                            _ebitda_auto = (_op_e_default + _da_for_auto) if _op_e_default and _da_for_auto else 0
-                            _ebitda_e_default = int(company.get('ebitda_forecast') or _ebitda_e_saved or _ebitda_auto or 0)
+                            _ebitda_e_default = int(company.get('ebitda_forecast') or _ebitda_e_saved or 0)
                             ebitda_e = st.number_input("EBITDA予想",
                                 value=_ebitda_e_default,
                                 key=f"ebitdae_{idx}", step=1, format="%d")
+                            # 簡便計算の注記（D&Aが0で直近年度末実績を使った場合）
+                            _ebitda_is_approx = st.session_state.get('_ebitda_approx', {}).get(_code_for_ebitda, False)
+                            if _ebitda_is_approx and ebitda_e > 0:
+                                st.caption(f"※ 簡便計算: 営業利益予想 + 直近年度末D&A実績（{_da_ltm_actual:,}）")
 
                         # --- 時価総額・EV・マルチプル自動計算 ---
                         mcap = int(stock_price * shares / 1000) if stock_price and shares else 0
@@ -1312,21 +1313,25 @@ render();
                     # ただしユーザーが手動でEBITDAを変更した場合はそちらを優先
                     if '_ebitda_calc' not in st.session_state:
                         st.session_state._ebitda_calc = {}
+                    if '_ebitda_approx' not in st.session_state:
+                        st.session_state._ebitda_approx = {}
                     for ec in edited_companies:
                         _code = ec.get('code', '')
                         _op = ec.get('op_forecast') or 0
                         _da = ec.get('da_forecast') or 0
                         _da_actual = int(ec.get('da_ltm') or 0)
+                        _used_actual = (_da == 0 and _da_actual > 0)
                         _da_use = _da if _da != 0 else _da_actual
                         _ebitda_calc = (_op + _da_use) if _op and _da_use else 0
                         _ebitda_manual = ec.get('ebitda_forecast') or 0
                         # 手動入力値と自動計算値が異なる場合、手動値を尊重
                         _ebitda_prev = st.session_state._ebitda_calc.get(_code, 0)
                         if _ebitda_manual and _ebitda_manual != _ebitda_prev and _ebitda_manual != _ebitda_calc:
-                            # ユーザーが手動でEBITDAを変更した
                             _ebitda_final = _ebitda_manual
+                            st.session_state._ebitda_approx[_code] = False
                         else:
                             _ebitda_final = _ebitda_calc
+                            st.session_state._ebitda_approx[_code] = _used_actual
                         if _code and _ebitda_final > 0:
                             st.session_state._ebitda_calc[_code] = _ebitda_final
                             ec['ebitda_forecast'] = _ebitda_final
