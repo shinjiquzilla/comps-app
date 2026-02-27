@@ -1213,10 +1213,9 @@ render();
                         _rev_e_default = int(tanshin.get('rev_forecast') or company.get('rev_forecast') or 0)
                         _op_e_default = int(tanshin.get('op_forecast') or company.get('op_forecast') or 0)
                         _ni_e_default = int(tanshin.get('ni_forecast') or company.get('ni_forecast') or 0)
-                        # 減価償却費予想: デフォルトはLTM実績値
+                        # 減価償却費予想: 予想がなければ0（EBITDA計算時に直近年度末実績でフォールバック）
                         _da_ltm_actual = int(company.get('da_ltm') or 0)
-                        _da_e_default = int(company.get('da_forecast') or _da_ltm_actual)
-                        _da_is_actual = (company.get('da_forecast') is None or company.get('da_forecast') == 0)
+                        _da_e_default = int(company.get('da_forecast') or 0)
                         _dps_default = float(company.get('dps') or 0)  # 有報記載の実績配当
 
                         with col3:
@@ -1245,11 +1244,12 @@ render();
                                 value=_da_e_default,
                                 key=f"dae_{idx}", step=1, format="%d")
                             st.caption("減価償却費予想が存在しない場合、0のままとすると、直近年度末の減価償却費を使って簡便的にEBITDA予想を計算します")
-                            # EBITDA予想: 保存値 → 自動計算(OP予想+D&A) → 0 の優先順
+                            # EBITDA予想: 保存値 → 自動計算(OP予想+D&A実績) → 0 の優先順
                             _code_for_ebitda = company.get('code', '')
                             _ebitda_e_saved = st.session_state.get('_ebitda_calc', {}).get(_code_for_ebitda, 0)
-                            _da_for_ebitda = da_e if da_e and da_e != 0 else _da_ltm_actual
-                            _ebitda_auto = (op_e + _da_for_ebitda) if op_e and _da_for_ebitda else 0
+                            # ウィジェット値ではなくデフォルト値から直接計算（session_stateキャッシュの影響を回避）
+                            _da_for_auto = _da_e_default if _da_e_default != 0 else _da_ltm_actual
+                            _ebitda_auto = (_op_e_default + _da_for_auto) if _op_e_default and _da_for_auto else 0
                             _ebitda_e_default = int(company.get('ebitda_forecast') or _ebitda_e_saved or _ebitda_auto or 0)
                             ebitda_e = st.number_input("EBITDA予想",
                                 value=_ebitda_e_default,
@@ -1296,7 +1296,7 @@ render();
                         edited['rev_forecast'] = rev_e if rev_e != 0 else None
                         edited['op_forecast'] = op_e if op_e != 0 else None
                         edited['ni_forecast'] = ni_e if ni_e != 0 else None
-                        edited['da_forecast'] = da_e if da_e != 0 else _da_ltm_actual or None
+                        edited['da_forecast'] = da_e if da_e != 0 else None
                         edited['ebitda_forecast'] = ebitda_e if ebitda_e != 0 else None
                         edited.pop('_ev', None)
                         edited.pop('_multiples', None)
