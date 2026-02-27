@@ -1245,17 +1245,13 @@ render();
                                 value=_da_e_default,
                                 key=f"dae_{idx}", step=1, format="%d")
                             st.caption("予想が存在せず0のままとすると直近年度末の減価償却費で簡便的に計算します")
-                            # EBITDA予想 = 営業利益予想 + 減価償却費（予想 or 直近年度末実績）
-                            _da_for_ebitda = da_e if da_e and da_e != 0 else _da_ltm_actual
-                            ebitda_e = (op_e + _da_for_ebitda) if op_e and _da_for_ebitda else 0
-                            _ebitda_note = ""
-                            if ebitda_e > 0:
-                                if (da_e == 0 or not da_e) and _da_ltm_actual > 0:
-                                    _ebitda_note = f"（D&A: 直近年度末実績 {_da_ltm_actual:,}）"
-                                elif _da_is_actual and da_e == _da_ltm_actual and _da_ltm_actual > 0:
-                                    _ebitda_note = "（D&A: 直近年度末実績）"
-                            st.metric("EBITDA予想", f"{ebitda_e:,}" if ebitda_e > 0 else "N/A",
-                                      help=_ebitda_note if _ebitda_note else None)
+                            # EBITDA予想: 反映済みならその値、なければ0
+                            _code_for_ebitda = company.get('code', '')
+                            _ebitda_e_saved = st.session_state.get('_ebitda_calc', {}).get(_code_for_ebitda, 0)
+                            _ebitda_e_default = int(company.get('ebitda_forecast') or _ebitda_e_saved or 0)
+                            ebitda_e = st.number_input("EBITDA予想",
+                                value=_ebitda_e_default,
+                                key=f"ebitdae_{idx}", step=1, format="%d")
 
                         # --- 時価総額・EV・マルチプル自動計算 ---
                         mcap = int(stock_price * shares / 1000) if stock_price and shares else 0
@@ -1306,9 +1302,22 @@ render();
 
                 _form_submitted = st.form_submit_button("▶ データを反映", type="primary", use_container_width=True)
 
-            # フォーム送信時: 予想値をSupabase + session_stateに保存
+            # フォーム送信時: EBITDA自動計算 + 予想値をSupabase + session_stateに保存
             if _form_submitted:
                 _reflect_status = st.status("データを反映中...", expanded=False)
+                # EBITDA予想を自動計算: 営業利益予想 + D&A（予想 or 直近年度末実績）
+                if '_ebitda_calc' not in st.session_state:
+                    st.session_state._ebitda_calc = {}
+                for ec in edited_companies:
+                    _code = ec.get('code', '')
+                    _op = ec.get('op_forecast') or 0
+                    _da = ec.get('da_forecast') or 0
+                    _da_actual = int(ec.get('da_ltm') or 0)
+                    _da_use = _da if _da != 0 else _da_actual
+                    _ebitda_calc = (_op + _da_use) if _op and _da_use else 0
+                    if _code and _ebitda_calc > 0:
+                        st.session_state._ebitda_calc[_code] = _ebitda_calc
+                        ec['ebitda_forecast'] = _ebitda_calc
                 if _HAS_SUPABASE:
                     for ec in edited_companies:
                         _code = ec.get('code', '')
