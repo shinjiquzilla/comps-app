@@ -359,10 +359,6 @@ if generate_btn:
             cs['edinet'] and cs['stock'] for cs in _cache_status.values()
         )
 
-        # デバッグ: キャッシュ状況を表示
-        _debug_cache = {c: {k: v for k, v in s.items() if k in ('edinet','stock')} for c, s in _cache_status.items()}
-        status_container.info(f"キャッシュ確認中... ローカル={_debug_cache}, Supabase={_HAS_SUPABASE}")
-
         # ---- Supabase補完: ローカルキャッシュがない企業をSupabaseから読む ----
         if not _all_fully_cached and _HAS_SUPABASE and use_cache:
             for _c in codes:
@@ -380,8 +376,6 @@ if generate_btn:
             _all_fully_cached = all(
                 cs['edinet'] and cs['stock'] for cs in _cache_status.values()
             )
-            _debug_sb = {c: {k: v for k, v in s.items() if k in ('edinet','stock')} for c, s in _cache_status.items()}
-            status_container.info(f"Supabase補完後: {_debug_sb}, fully_cached={_all_fully_cached}")
 
         # ---- 完全キャッシュパス: 外部API一切なし ----
         if _all_fully_cached and use_cache:
@@ -534,38 +528,57 @@ if generate_btn:
             # Step 1: EDINET一括検索
             edinet_results = {}
             if edinet_available:
+                # キャッシュ判定: ローカル + Supabase補完結果を活用
                 cached_codes = []
                 uncached_codes = []
                 if use_cache:
                     for c in codes:
-                        meta = load_cached_meta(c)
-                        if meta and meta.get("docs") is not None:
+                        # ローカルキャッシュ or Supabase補完済みならスキップ
+                        if _cache_status.get(c, {}).get('edinet'):
                             cached_codes.append(c)
                         else:
                             uncached_codes.append(c)
                 else:
                     uncached_codes = list(codes)
 
+                # Supabase補完済みの企業はここで結果を設定
+                for c in cached_codes:
+                    _sb_data = _cache_status.get(c, {}).get('_sb_edinet')
+                    if _sb_data:
+                        edinet_results[c] = _sb_data
+
                 if cached_codes and not uncached_codes:
-                    status_container.info(f"◆ EDINET: {len(cached_codes)}社すべてキャッシュから読み込み")
+                    status_container.info(f"◆ EDINET: {len(cached_codes)}社すべてキャッシュ/DBから読み込み")
                 elif cached_codes:
-                    status_container.info(f"◆ EDINET: {len(cached_codes)}社はキャッシュから読み込み、{len(uncached_codes)}社をAPI検索中...")
+                    status_container.info(f"◆ EDINET: {len(cached_codes)}社はキャッシュ/DBから読み込み、{len(uncached_codes)}社({','.join(uncached_codes)})をAPI検索中...")
                 else:
                     status_container.info(f"◆ EDINET: {len(codes)}社分を一括検索中（{search_days}日間）...")
 
-                def edinet_progress(current, total):
-                    progress_bar.progress(0.1 + current / total * 0.55)
-                    progress_text.text(f"  ◆ EDINET検索: {current}/{total}日")
+                if uncached_codes:
+                    def edinet_progress(current, total):
+                        progress_bar.progress(0.1 + current / total * 0.55)
+                        progress_text.text(f"  ◆ EDINET検索: {current}/{total}日 ({','.join(uncached_codes)})")
 
-                try:
-                    edinet_results = fetch_companies_batch(
-                        codes, days=search_days, progress_callback=edinet_progress,
-                        use_cache=use_cache
-                    )
-                    if cached_codes and not uncached_codes:
-                        progress_bar.progress(0.65)
-                except Exception as e:
-                    st.session_state.errors.append(f"EDINET一括検索エラー: {e}")
+                    try:
+                        _new_results = fetch_companies_batch(
+                            uncached_codes, days=search_days, progress_callback=edinet_progress,
+                            use_cache=use_cache
+                        )
+                        edinet_results.update(_new_results)
+                    except Exception as e:
+                        st.session_state.errors.append(f"EDINET一括検索エラー: {e}")
+                else:
+                    # ローカルキャッシュのみの企業（Supabase補完なし）もロード
+                    for c in cached_codes:
+                        if c not in edinet_results:
+                            try:
+                                _local = fetch_companies_batch(
+                                    [c], days=search_days, use_cache=True
+                                )
+                                edinet_results.update(_local)
+                            except Exception:
+                                pass
+                    progress_bar.progress(0.65)
             else:
                 st.session_state.errors.append("EDINET: API Key未設定（スキップ）")
 
