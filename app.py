@@ -1218,7 +1218,7 @@ render();
 
                         col4, col5 = st.columns(2)
                         with col4:
-                            st.markdown("**予想値 - FY E**")
+                            st.markdown("**予想値（進行期末）**")
                             if tanshin:
                                 st.caption("◆ 決算短信から自動プリフィル済み")
                             rev_e = st.number_input("売上高予想", value=_rev_e_default,
