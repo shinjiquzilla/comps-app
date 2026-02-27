@@ -1336,7 +1336,10 @@ render();
                         if _code and _ebitda_final > 0:
                             st.session_state._ebitda_calc[_code] = _ebitda_final
                             ec['ebitda_forecast'] = _ebitda_final
-                        st.write(f"{_code}: OP={_op:,}, D&A予想={_da:,}, D&A実績={_da_actual:,}, EBITDA={ec.get('ebitda_forecast') or 0:,}")
+                        if _ebitda_final > 0:
+                            st.write(f"  {_code}: EBITDA予想 = {_ebitda_final:,}（OP {_op:,} + D&A {_da_use:,}）")
+                        elif _op and _da_actual == 0:
+                            st.write(f"  {_code}: 減価償却費（LTM実績）が未取得のためEBITDA予想を計算できません。PLセクションの「減価償却費」を手入力してください。")
                     if _HAS_SUPABASE:
                         for ec in edited_companies:
                             _code = ec.get('code', '')
