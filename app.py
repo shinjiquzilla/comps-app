@@ -395,8 +395,10 @@ if generate_btn:
         _all_fully_cached = all(
             cs['edinet'] and cs['stock'] for cs in _cache_status.values()
         )
-        _cs_str = ', '.join(f'{c}: e={s["edinet"]} s={s["stock"]}' for c, s in _cache_status.items())
-        print(f"[CACHE_CHECK] local_all_cached={_all_fully_cached}, status={_cs_str}")
+        _cs_parts = []
+        for _c, _s in _cache_status.items():
+            _cs_parts.append(_c + ": e=" + str(_s['edinet']) + " s=" + str(_s['stock']))
+        print("[CACHE_CHECK] local_all_cached=" + str(_all_fully_cached) + ", status=" + ', '.join(_cs_parts))
 
         # ---- Supabase補完: ローカルキャッシュがない企業をSupabaseから読む ----
         if not _all_fully_cached and _HAS_SUPABASE and use_cache:
