@@ -489,7 +489,11 @@ def extract_financial_data(zip_bytes, include_prior=False):
                         key = map_key
                         break
         if key is None:
-            pass
+            # デバッグ: 未マッチの営業利益・減価償却費関連要素を検出
+            _ln = element_id.lower()
+            if any(kw in _ln for kw in ('operat', 'depreci', 'amortis', 'amortiz')):
+                _label = clean(parts[1]) if len(parts) > 1 else ''
+                print(f"[EDINET_UNMATCH] {element_id} | {_label} | {relative_year} | {consolidated} | val={value_str}")
             continue
 
         # 格納先を選択
