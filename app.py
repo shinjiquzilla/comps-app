@@ -1288,7 +1288,7 @@ render();
                         edited['rev_ltm'] = rev if rev != 0 else None
                         edited['op_ltm'] = op if op != 0 else None
                         edited['ni_ltm'] = ni if ni != 0 else None
-                        edited['da_ltm'] = da if da != 0 else None
+                        edited['da_ltm'] = da if da != 0 else company.get('da_ltm')
                         edited['ebitda_ltm'] = ebitda if ebitda != 0 else None
                         edited['cash'] = cash if cash != 0 else None
                         edited['total_debt'] = debt if debt != 0 else None
