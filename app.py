@@ -903,7 +903,7 @@ function render() {{
     th.innerHTML = displayName + arrow;
     th.onclick = () => {{
       if (sortCol === col) {{ sortAsc = !sortAsc; }}
-      else {{ sortCol = col; sortAsc = true; }}
+      else {{ sortCol = col; sortAsc = false; }}
       render();
     }};
     hr.appendChild(th);
