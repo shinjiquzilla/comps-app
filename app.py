@@ -298,6 +298,9 @@ if generate_btn:
     elif any(not _VALID_CODE_RE.match(c) for c in codes):
         st.error("証券コードは4桁の英数字で入力してください（例: 6763, 241A）。")
     else:
+        _init_status = st.empty()
+        _init_status.info(f"● {len(codes)}社のComps生成を開始しています...")
+
         # EDINET API Key チェック（全社キャッシュ済みならキー不要）
         # まず全社のキャッシュ状況を事前チェック
         _all_edinet_cached = True
@@ -361,6 +364,7 @@ if generate_btn:
 
         # ---- Supabase補完: ローカルキャッシュがない企業をSupabaseから読む ----
         if not _all_fully_cached and _HAS_SUPABASE and use_cache:
+            _init_status.info(f"● データベースからキャッシュを確認中...")
             for _c in codes:
                 cs = _cache_status[_c]
                 if not cs['edinet']:
@@ -378,6 +382,7 @@ if generate_btn:
             )
 
         # ---- 完全キャッシュパス: 外部API一切なし ----
+        _init_status.empty()
         if _all_fully_cached and use_cache:
             progress_bar = st.progress(0)
             status_container = st.empty()
