@@ -33,5 +33,20 @@
     "rev_forecast": 490000,
     "op_forecast": 36000,
     "ni_forecast": 29700
+  },
+  "6626": {
+    "rev_forecast": 23382,
+    "op_forecast": 3000,
+    "ni_forecast": 2240
+  },
+  "6770": {
+    "rev_forecast": 1010000,
+    "op_forecast": 37000,
+    "ni_forecast": 21000
+  },
+  "7280": {
+    "rev_forecast": 340000,
+    "op_forecast": 20000,
+    "ni_forecast": 9000
   }
 }
