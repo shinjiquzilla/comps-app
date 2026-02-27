@@ -199,7 +199,7 @@ def save_meta(code_4, docs, search_days, company_name=""):
 
 
 def clear_cache(code_4=None):
-    """キャッシュ削除（EDINET＋株価）。code_4 指定で1社、None で全社。"""
+    """キャッシュ削除（EDINET＋株価、ローカル＋Supabase）。code_4 指定で1社、None で全社。"""
     import shutil
     stock_base = CACHE_BASE.parent / "stock"
     if code_4:
@@ -214,6 +214,21 @@ def clear_cache(code_4=None):
             shutil.rmtree(CACHE_BASE)
         if stock_base.exists():
             shutil.rmtree(stock_base)
+    # Supabaseのキャッシュも削除
+    try:
+        from supabase_client import get_supabase
+        sb = get_supabase()
+        if sb:
+            if code_4:
+                sb.table("financials").delete().eq("code", str(code_4)).execute()
+                sb.table("edinet_meta").delete().eq("code", str(code_4)).execute()
+                sb.table("stock_data").delete().eq("code", str(code_4)).execute()
+            else:
+                sb.table("financials").delete().neq("code", "").execute()
+                sb.table("edinet_meta").delete().neq("code", "").execute()
+                sb.table("stock_data").delete().neq("code", "").execute()
+    except Exception:
+        pass
 
 
 def to_sec_code(code: str) -> str:
