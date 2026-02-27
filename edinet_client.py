@@ -453,7 +453,7 @@ def extract_financial_data(zip_bytes, include_prior=False):
             return s.strip().strip('"').strip()
 
         element_id = clean(parts[0])
-        # label = clean(parts[1])
+        label = clean(parts[1])
         # context_id = clean(parts[2])
         relative_year = clean(parts[3])
         consolidated = clean(parts[4])
@@ -461,6 +461,10 @@ def extract_financial_data(zip_bytes, include_prior=False):
         # unit_id = clean(parts[6])
         unit = clean(parts[7])
         value_str = clean(parts[8])
+
+        # デバッグ: フィルタ前に減価償却関連要素を全出力
+        if '減価償却' in label or '償却費' in label or 'epreciation' in element_id.lower() or 'mortis' in element_id.lower() or 'mortiz' in element_id.lower():
+            print(f"[EDINET-DEBUG-PRE] element_id={element_id}, label={label}, value={value_str}, year={relative_year}, consol={consolidated}")
 
         # 当期 or 前期を判定
         is_current = relative_year in current_periods
