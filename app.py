@@ -1243,7 +1243,7 @@ render();
                                                    key=f"nie_{idx}", step=1, format="%d")
                             _da_label = "減価償却費予想"
                             if _da_is_actual and _da_e_default > 0:
-                                _da_label = "減価償却費予想（予想が存在せず0のままとすると直近年度末の減価償却費で簡便的に計算します）"
+                                _da_label = "減価償却費予想（予想がない場合は0としてください。EBITDAは直近年度末の減価償却費を使い簡便的に試算します）"
                             da_e = st.number_input(_da_label,
                                 value=_da_e_default,
                                 key=f"dae_{idx}", step=1, format="%d")
