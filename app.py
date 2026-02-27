@@ -943,6 +943,8 @@ render();
             )
 
             if uploaded_files:
+                _upload_status = st.empty()
+                _upload_status.info(f"● {len(uploaded_files)}件の決算短信を確認中...")
                 id_results = []
                 for uf in uploaded_files:
                     pdf_bytes = uf.read()
@@ -986,6 +988,7 @@ render();
                         '保存ファイル名': filename,
                         'ステータス': status,
                     })
+                _upload_status.empty()
                 st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
 
                 # 判定失敗の警告
@@ -1033,7 +1036,12 @@ render();
                                     save_forecast(_ir_code, st.session_state.tanshin_forecasts[_ir_code])
                                 except Exception:
                                     pass
-                    st.success(f"✅ {_parsed_count}件の業績予想を抽出しました。")
+                    _sc1, _sc2 = st.columns([3, 1])
+                    with _sc1:
+                        st.success(f"✅ {_parsed_count}件の業績予想を抽出しました。")
+                    with _sc2:
+                        if st.button("▶ サマリーテーブルを再生成", type="primary", key="regen_after_upload"):
+                            st.rerun()
                 for _pf_code, _pf_name, _pf_file, _pf_bytes in _parse_failures:
                     st.warning(
                         f"**{_pf_code} {_pf_name}**（{_pf_file}）: "
@@ -1158,8 +1166,6 @@ render();
                     st.dataframe(pd.DataFrame(_existing_files), use_container_width=True, hide_index=True)
 
             st.divider()
-            if st.button("▶ サマリーテーブルを再生成", type="primary"):
-                st.rerun()
 
             # --- 手動補完セクション ---
             st.subheader("手動データ補完")
