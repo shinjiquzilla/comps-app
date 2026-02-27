@@ -427,6 +427,7 @@ def identify_tanshin_pdf(pdf_bytes, candidate_codes):
     # --- 期間種別検出 ---
     # タイトル行（「第X四半期決算短信」）から判定。
     # テキスト全体の「第X四半期」で判定するとQ3決算短信内のQ1/Q2参照に誤マッチする。
+    # PyMuPDFが行を断片化する場合があるため、冒頭テキスト結合でもフォールバック判定。
     _period_detected = False
     for line in lines:
         if '決算短信' in line:
@@ -442,7 +443,14 @@ def identify_tanshin_pdf(pdf_bytes, candidate_codes):
                 _period_detected = True
                 break
     if not _period_detected:
-        result['period_type'] = 'FY'
+        # フォールバック: 冒頭20行を結合してタイトルを再構成（行断片化対応）
+        _header_text = ''.join(line.strip() for line in lines[:20])
+        m_q = re.search(r'第([1-3１-３])四半期.*決算短信', _header_text)
+        if m_q:
+            q_num = m_q.group(1).replace('１', '1').replace('２', '2').replace('３', '3')
+            result['period_type'] = f'Q{q_num}'
+        else:
+            result['period_type'] = 'FY'
 
     # --- ファイル名生成 ---
     if result['fy_end']:
