@@ -1241,17 +1241,22 @@ render();
                                                    key=f"ope_{idx}", step=1, format="%d")
                             ni_e = st.number_input("純利益予想", value=_ni_e_default,
                                                    key=f"nie_{idx}", step=1, format="%d")
-                            da_e = st.number_input(
-                                "減価償却費予想" + ("（終了年度実績）" if _da_is_actual and _da_e_default > 0 else ""),
+                            _da_label = "減価償却費予想"
+                            if _da_is_actual and _da_e_default > 0:
+                                _da_label = "減価償却費予想（予想が存在せず0のままとすると直近年度末の減価償却費で簡便的に計算します）"
+                            da_e = st.number_input(_da_label,
                                 value=_da_e_default,
                                 key=f"dae_{idx}", step=1, format="%d")
-                            # EBITDA予想 = 営業利益予想 + 減価償却費予想（自動計算）
-                            ebitda_e = (op_e + da_e) if op_e and da_e else 0
+                            # EBITDA予想 = 営業利益予想 + 減価償却費（予想 or 直近年度末実績）
+                            _da_for_ebitda = da_e if da_e and da_e != 0 else _da_ltm_actual
+                            ebitda_e = (op_e + _da_for_ebitda) if op_e and _da_for_ebitda else 0
                             if ebitda_e > 0:
-                                _ebitda_label = f"EBITDA予想: **{ebitda_e:,}**"
-                                if _da_is_actual and da_e == _da_ltm_actual and _da_ltm_actual > 0:
-                                    _ebitda_label += "（D&Aは終了年度実績）"
-                                st.caption(_ebitda_label)
+                                _ebitda_note = ""
+                                if (da_e == 0 or not da_e) and _da_ltm_actual > 0:
+                                    _ebitda_note = f"（D&A: 直近年度末実績 {_da_ltm_actual:,}）"
+                                elif _da_is_actual and da_e == _da_ltm_actual and _da_ltm_actual > 0:
+                                    _ebitda_note = "（D&A: 直近年度末実績）"
+                                st.markdown(f"**EBITDA予想: {ebitda_e:,}** {_ebitda_note}")
 
                         # --- 時価総額・EV・マルチプル自動計算 ---
                         mcap = int(stock_price * shares / 1000) if stock_price and shares else 0
@@ -1294,7 +1299,7 @@ render();
                         edited['rev_forecast'] = rev_e if rev_e != 0 else None
                         edited['op_forecast'] = op_e if op_e != 0 else None
                         edited['ni_forecast'] = ni_e if ni_e != 0 else None
-                        edited['da_forecast'] = da_e if da_e != 0 else None
+                        edited['da_forecast'] = da_e if da_e != 0 else _da_ltm_actual or None
                         edited['ebitda_forecast'] = ebitda_e if ebitda_e != 0 else None
                         edited.pop('_ev', None)
                         edited.pop('_multiples', None)
@@ -1303,32 +1308,35 @@ render();
                 _form_submitted = st.form_submit_button("▶ データを反映", type="primary", use_container_width=True)
 
             # フォーム送信時: 予想値をSupabase + session_stateに保存
-            if _form_submitted and _HAS_SUPABASE:
-                for ec in edited_companies:
-                    _code = ec.get('code', '')
-                    _ni_e = ec.get('ni_forecast')
-                    _rev_e = ec.get('rev_forecast')
-                    _op_e = ec.get('op_forecast')
-                    if _code and (_ni_e or _rev_e or _op_e):
-                        _fc = {
-                            'ni_forecast': _ni_e,
-                            'rev_forecast': _rev_e,
-                            'op_forecast': _op_e,
-                        }
-                        # session_stateに既存のfy_month/period_typeがあれば引き継ぐ
-                        _existing = st.session_state.get('tanshin_forecasts', {}).get(_code, {})
-                        _fc['fy_month'] = _existing.get('fy_month', 'unknown')
-                        _fc['period_type'] = _existing.get('period_type', 'manual')
-                        # session_stateに保存
-                        if 'tanshin_forecasts' not in st.session_state:
-                            st.session_state.tanshin_forecasts = {}
-                        st.session_state.tanshin_forecasts[_code] = _fc
-                        # Supabase + ローカルJSONに保存
-                        try:
-                            save_forecast(_code, _fc)
-                        except Exception:
-                            pass
-                _save_forecasts_cache(st.session_state.get('tanshin_forecasts', {}))
+            if _form_submitted:
+                _reflect_status = st.status("データを反映中...", expanded=False)
+                if _HAS_SUPABASE:
+                    for ec in edited_companies:
+                        _code = ec.get('code', '')
+                        _ni_e = ec.get('ni_forecast')
+                        _rev_e = ec.get('rev_forecast')
+                        _op_e = ec.get('op_forecast')
+                        if _code and (_ni_e or _rev_e or _op_e):
+                            _fc = {
+                                'ni_forecast': _ni_e,
+                                'rev_forecast': _rev_e,
+                                'op_forecast': _op_e,
+                            }
+                            # session_stateに既存のfy_month/period_typeがあれば引き継ぐ
+                            _existing = st.session_state.get('tanshin_forecasts', {}).get(_code, {})
+                            _fc['fy_month'] = _existing.get('fy_month', 'unknown')
+                            _fc['period_type'] = _existing.get('period_type', 'manual')
+                            # session_stateに保存
+                            if 'tanshin_forecasts' not in st.session_state:
+                                st.session_state.tanshin_forecasts = {}
+                            st.session_state.tanshin_forecasts[_code] = _fc
+                            # Supabase + ローカルJSONに保存
+                            try:
+                                save_forecast(_code, _fc)
+                            except Exception:
+                                pass
+                    _save_forecasts_cache(st.session_state.get('tanshin_forecasts', {}))
+                _reflect_status.update(label="データを反映しました。", state="complete")
                 st.success("予想値をデータベースに保存しました。")
 
             # --- Excel生成 ---
