@@ -395,6 +395,7 @@ if generate_btn:
         _all_fully_cached = all(
             cs['edinet'] and cs['stock'] for cs in _cache_status.values()
         )
+        print(f"[CACHE_CHECK] local_all_cached={_all_fully_cached}, status={{{', '.join(f'{c}: e={s[\"edinet\"]} s={s[\"stock\"]}' for c,s in _cache_status.items())}}}")
 
         # ---- Supabase補完: ローカルキャッシュがない企業をSupabaseから読む ----
         if not _all_fully_cached and _HAS_SUPABASE and use_cache:
@@ -414,6 +415,7 @@ if generate_btn:
             _all_fully_cached = all(
                 cs['edinet'] and cs['stock'] for cs in _cache_status.values()
             )
+            print(f"[CACHE_CHECK] after_supabase: all_cached={_all_fully_cached}")
 
         # ---- 完全キャッシュパス: 外部API一切なし ----
         _init_status.empty()
