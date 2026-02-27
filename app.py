@@ -1267,17 +1267,18 @@ render();
                                 value=_da_e_default,
                                 key=f"dae_{idx}", step=1, format="%d")
                             st.caption("減価償却費予想が存在しない場合、0のままにしてください。「データを反映」ボタンを押すと、直近年度末の減価償却費を使って簡便的に進行期のEBITDA予想を計算します。")
-                            # EBITDA予想: DB/session_state保存値があればそれ、なければ0
+                            # EBITDA予想: 自動計算値を表示（編集不可）
                             _code_for_ebitda = company.get('code', '')
                             _ebitda_e_saved = st.session_state.get('_ebitda_calc', {}).get(_code_for_ebitda, 0)
-                            _ebitda_e_default = int(company.get('ebitda_forecast') or _ebitda_e_saved or 0)
-                            ebitda_e = st.number_input("EBITDA予想",
-                                value=_ebitda_e_default,
-                                key=f"ebitdae_{idx}", step=1, format="%d")
-                            # 簡便計算の注記（D&Aが0で直近年度末実績を使った場合）
                             _ebitda_is_approx = st.session_state.get('_ebitda_approx', {}).get(_code_for_ebitda, False)
-                            if _ebitda_is_approx and ebitda_e > 0:
-                                st.caption(f"※ 簡便計算: 営業利益予想 + 直近年度末D&A実績（{_da_ltm_actual:,}）")
+                            if _ebitda_e_saved > 0:
+                                st.metric("EBITDA予想（自動計算）", f"{_ebitda_e_saved:,}")
+                                if _ebitda_is_approx:
+                                    st.caption(f"※ 簡便計算: 営業利益予想 + 直近年度末D&A実績（{_da_ltm_actual:,}）")
+                            else:
+                                st.metric("EBITDA予想（自動計算）", "—")
+                                st.caption("「データを反映」ボタンを押すと、営業利益予想 + 減価償却費から自動計算されます。")
+                            ebitda_e = 0  # フォームからは使わない
 
                         # --- 時価総額・EV・マルチプル自動計算 ---
                         mcap = int(stock_price * shares / 1000) if stock_price and shares else 0
@@ -1322,9 +1323,9 @@ render();
                         edited['op_forecast'] = op_e if op_e != 0 else None
                         edited['ni_forecast'] = ni_e if ni_e != 0 else None
                         edited['da_forecast'] = da_e if da_e != 0 else None
-                        # EBITDA予想: ウィジェット値 → session_state計算値 → None
-                        _ebitda_fallback = st.session_state.get('_ebitda_calc', {}).get(company.get('code', ''), 0)
-                        edited['ebitda_forecast'] = ebitda_e if ebitda_e != 0 else (_ebitda_fallback if _ebitda_fallback > 0 else None)
+                        # EBITDA予想: session_stateの自動計算値から取得
+                        _ebitda_stored = st.session_state.get('_ebitda_calc', {}).get(company.get('code', ''), 0)
+                        edited['ebitda_forecast'] = _ebitda_stored if _ebitda_stored > 0 else None
                         edited.pop('_ev', None)
                         edited.pop('_multiples', None)
                         edited_companies.append(edited)
@@ -1333,66 +1334,55 @@ render();
 
             # フォーム送信時: EBITDA自動計算 + 予想値をSupabase + session_stateに保存
             if _form_submitted:
-                print(f"[FORM_SUBMIT] edited_companies count={len(edited_companies)}")
-                # EBITDA予想を自動計算: 営業利益予想 + D&A（予想 or 直近年度末実績）
-                if '_ebitda_calc' not in st.session_state:
-                    st.session_state['_ebitda_calc'] = {}
-                if '_ebitda_approx' not in st.session_state:
-                    st.session_state['_ebitda_approx'] = {}
-                for ec in edited_companies:
-                    _code = ec.get('code', '')
-                    _op = ec.get('op_forecast') or 0
-                    _da = ec.get('da_forecast') or 0
-                    _da_actual = int(ec.get('_da_ltm_original') or ec.get('da_ltm') or 0)
-                    print(f"[EBITDA_CALC] {_code}: op={_op}, da_forecast={_da}, da_actual={_da_actual}")
-                    _used_actual = (_da == 0 and _da_actual > 0)
-                    _da_use = _da if _da != 0 else _da_actual
-                    _ebitda_calc = (_op + _da_use) if _op and _da_use else 0
-                    _ebitda_manual = ec.get('ebitda_forecast') or 0
-                    _ebitda_prev = st.session_state['_ebitda_calc'].get(_code, 0)
-                    if _ebitda_manual and _ebitda_manual != _ebitda_prev and _ebitda_manual != _ebitda_calc:
-                        _ebitda_final = _ebitda_manual
-                        st.session_state['_ebitda_approx'][_code] = False
-                    else:
-                        _ebitda_final = _ebitda_calc
-                        st.session_state['_ebitda_approx'][_code] = _used_actual
-                    if _code and _ebitda_final > 0:
-                        st.session_state['_ebitda_calc'][_code] = _ebitda_final
-                        ec['ebitda_forecast'] = _ebitda_final
-                    print(f"[EBITDA_CALC] {_code}: ebitda_final={_ebitda_final}")
-                # EBITDA計算結果をまとめて表示
-                _ebitda_summary = []
-                for ec in edited_companies:
-                    _c = ec.get('code', '')
-                    _ef = ec.get('ebitda_forecast') or st.session_state.get('_ebitda_calc', {}).get(_c, 0)
-                    if _ef and _ef > 0:
-                        _ebitda_summary.append(f"- {_c}: EBITDA予想 **{_ef:,}**")
-                if _ebitda_summary:
-                    st.success("EBITDA予想を計算しました。\n\n" + "\n".join(_ebitda_summary))
-                if _HAS_SUPABASE:
+                with st.spinner("データを反映中..."):
+                    print(f"[FORM_SUBMIT] edited_companies count={len(edited_companies)}")
+                    if '_ebitda_calc' not in st.session_state:
+                        st.session_state['_ebitda_calc'] = {}
+                    if '_ebitda_approx' not in st.session_state:
+                        st.session_state['_ebitda_approx'] = {}
                     for ec in edited_companies:
                         _code = ec.get('code', '')
-                        _ni_e = ec.get('ni_forecast')
-                        _rev_e = ec.get('rev_forecast')
-                        _op_e = ec.get('op_forecast')
-                        if _code and (_ni_e or _rev_e or _op_e):
-                            _fc = {
-                                'ni_forecast': _ni_e,
-                                'rev_forecast': _rev_e,
-                                'op_forecast': _op_e,
-                            }
-                            _existing = st.session_state.get('tanshin_forecasts', {}).get(_code, {})
-                            _fc['fy_month'] = _existing.get('fy_month', 'unknown')
-                            _fc['period_type'] = _existing.get('period_type', 'manual')
-                            if 'tanshin_forecasts' not in st.session_state:
-                                st.session_state.tanshin_forecasts = {}
-                            st.session_state.tanshin_forecasts[_code] = _fc
-                            try:
-                                save_forecast(_code, _fc)
-                            except Exception:
-                                pass
-                    _save_forecasts_cache(st.session_state.get('tanshin_forecasts', {}))
-                st.toast("データを反映しました。", icon="✅")
+                        _op = ec.get('op_forecast') or 0
+                        _da = ec.get('da_forecast') or 0
+                        _da_actual = int(ec.get('_da_ltm_original') or ec.get('da_ltm') or 0)
+                        _used_actual = (_da == 0 and _da_actual > 0)
+                        _da_use = _da if _da != 0 else _da_actual
+                        _ebitda_calc = (_op + _da_use) if _op and _da_use else 0
+                        _ebitda_manual = ec.get('ebitda_forecast') or 0
+                        _ebitda_prev = st.session_state['_ebitda_calc'].get(_code, 0)
+                        if _ebitda_manual and _ebitda_manual != _ebitda_prev and _ebitda_manual != _ebitda_calc:
+                            _ebitda_final = _ebitda_manual
+                            st.session_state['_ebitda_approx'][_code] = False
+                        else:
+                            _ebitda_final = _ebitda_calc
+                            st.session_state['_ebitda_approx'][_code] = _used_actual
+                        if _code and _ebitda_final > 0:
+                            st.session_state['_ebitda_calc'][_code] = _ebitda_final
+                            ec['ebitda_forecast'] = _ebitda_final
+                    if _HAS_SUPABASE:
+                        for ec in edited_companies:
+                            _code = ec.get('code', '')
+                            _ni_e = ec.get('ni_forecast')
+                            _rev_e = ec.get('rev_forecast')
+                            _op_e = ec.get('op_forecast')
+                            if _code and (_ni_e or _rev_e or _op_e):
+                                _fc = {
+                                    'ni_forecast': _ni_e,
+                                    'rev_forecast': _rev_e,
+                                    'op_forecast': _op_e,
+                                }
+                                _existing = st.session_state.get('tanshin_forecasts', {}).get(_code, {})
+                                _fc['fy_month'] = _existing.get('fy_month', 'unknown')
+                                _fc['period_type'] = _existing.get('period_type', 'manual')
+                                if 'tanshin_forecasts' not in st.session_state:
+                                    st.session_state.tanshin_forecasts = {}
+                                st.session_state.tanshin_forecasts[_code] = _fc
+                                try:
+                                    save_forecast(_code, _fc)
+                                except Exception:
+                                    pass
+                        _save_forecasts_cache(st.session_state.get('tanshin_forecasts', {}))
+                st.success("データを反映しました。")
 
             # --- Excel生成 ---
             st.divider()
