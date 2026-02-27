@@ -1195,8 +1195,7 @@ render();
 
             edited_companies = []
 
-            _form_version = st.session_state.get('_form_version', 0)
-            with st.form(f"manual_edit_form_v{_form_version}"):
+            with st.form("manual_edit_form"):
                 tabs = st.tabs([f"  {c.get('code', '')}  {c.get('name', '')}  " for c in companies_for_config])
 
                 for idx, (tab, company) in enumerate(zip(tabs, companies_for_config)):
@@ -1361,6 +1360,15 @@ render();
                         st.session_state['_ebitda_calc'][_code] = _ebitda_final
                         ec['ebitda_forecast'] = _ebitda_final
                     print(f"[EBITDA_CALC] {_code}: ebitda_final={_ebitda_final}")
+                # EBITDA計算結果をまとめて表示
+                _ebitda_summary = []
+                for ec in edited_companies:
+                    _c = ec.get('code', '')
+                    _ef = ec.get('ebitda_forecast') or st.session_state.get('_ebitda_calc', {}).get(_c, 0)
+                    if _ef and _ef > 0:
+                        _ebitda_summary.append(f"- {_c}: EBITDA予想 **{_ef:,}**")
+                if _ebitda_summary:
+                    st.success("EBITDA予想を計算しました。\n\n" + "\n".join(_ebitda_summary))
                 if _HAS_SUPABASE:
                     for ec in edited_companies:
                         _code = ec.get('code', '')
@@ -1384,13 +1392,6 @@ render();
                             except Exception:
                                 pass
                     _save_forecasts_cache(st.session_state.get('tanshin_forecasts', {}))
-                # フォームを再生成してEBITDAボックスに計算値を反映
-                st.session_state['_form_version'] = _form_version + 1
-                st.session_state['_form_reflected'] = True
-                st.rerun()
-
-            # rerun後のトースト通知
-            if st.session_state.pop('_form_reflected', False):
                 st.toast("データを反映しました。", icon="✅")
 
             # --- Excel生成 ---
