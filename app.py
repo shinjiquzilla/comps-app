@@ -353,9 +353,10 @@ if generate_btn:
         st.session_state.company_data = []
         st.session_state.errors = []
         st.session_state.generation_done = False
-        # 前回のフォーム入力値・EBITDA計算値をクリア
+        # 前回のフォーム入力値・EBITDA計算値・決算短信予想値をクリア
         st.session_state.pop('_ebitda_calc', None)
         st.session_state.pop('_ebitda_approx', None)
+        st.session_state.pop('tanshin_forecasts', None)
         for _k in list(st.session_state.keys()):
             if any(_k.startswith(p) for p in (
                 'name_', 'acc_', 'fy_', 'price_', 'shares_',
@@ -1252,41 +1253,45 @@ render();
 
             edited_companies = []
 
-            with st.form("manual_edit_form"):
+            # 企業セットが変わったらwidgetキーを完全リセット
+            _codes_hash = "_".join(sorted(candidate_codes))
+            _form_key = f"manual_edit_form_{_codes_hash}"
+            with st.form(_form_key):
                 tabs = st.tabs([f"  {c.get('code', '')}  {c.get('name', '')}  " for c in companies_for_config])
 
                 for idx, (tab, company) in enumerate(zip(tabs, companies_for_config)):
+                    _wk = company.get('code', str(idx))  # widgetキーに企業コードを使用
                     with tab:
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             st.markdown("**基本情報**")
-                            name = st.text_input("企業名", value=company.get('name', ''), key=f"name_{idx}")
+                            name = st.text_input("企業名", value=company.get('name', ''), key=f"name_{_wk}")
                             accounting = st.selectbox("会計基準",
                                                       ["J-GAAP", "IFRS", "US-GAAP"],
-                                                      index=0, key=f"acc_{idx}")
+                                                      index=0, key=f"acc_{_wk}")
                             _fy_raw = company.get('fy_end', 'Mar')
                             _fy_month_display = {'Mar': '3月', 'Jun': '6月', 'Sep': '9月', 'Dec': '12月',
                                                  'Jan': '1月', 'Feb': '2月', 'Apr': '4月', 'May': '5月',
                                                  'Jul': '7月', 'Aug': '8月', 'Oct': '10月', 'Nov': '11月'}
-                            fy_end = st.text_input("決算月", value=_fy_month_display.get(_fy_raw, _fy_raw), key=f"fy_{idx}")
+                            fy_end = st.text_input("決算月", value=_fy_month_display.get(_fy_raw, _fy_raw), key=f"fy_{_wk}")
                             st.markdown("**株価・株式**")
                             stock_price = st.number_input("株価（円）", value=float(company.get('stock_price') or 0),
-                                                          key=f"price_{idx}", step=1.0, format="%.0f")
+                                                          key=f"price_{_wk}", step=1.0, format="%.0f")
                             shares = st.number_input("発行済株式数（千株）", value=int(company.get('shares_outstanding') or 0),
-                                                     key=f"shares_{idx}", step=1, format="%d")
+                                                     key=f"shares_{_wk}", step=1, format="%d")
 
                         with col2:
                             st.markdown("**P&L - LTM**")
                             rev = st.number_input("売上高", value=int(company.get('rev_ltm') or 0),
-                                                  key=f"rev_{idx}", step=1, format="%d")
+                                                  key=f"rev_{_wk}", step=1, format="%d")
                             op = st.number_input("営業利益", value=int(company.get('op_ltm') or 0),
-                                                 key=f"op_{idx}", step=1, format="%d")
+                                                 key=f"op_{_wk}", step=1, format="%d")
                             ni = st.number_input("純利益", value=int(company.get('ni_ltm') or 0),
-                                                 key=f"ni_{idx}", step=1, format="%d")
+                                                 key=f"ni_{_wk}", step=1, format="%d")
                             da = st.number_input("減価償却費", value=int(company.get('da_ltm') or 0),
-                                                 key=f"da_{idx}", step=1, format="%d")
+                                                 key=f"da_{_wk}", step=1, format="%d")
                             ebitda = st.number_input("EBITDA", value=int(company.get('ebitda_ltm') or 0),
-                                                     key=f"ebitda_{idx}", step=1, format="%d")
+                                                     key=f"ebitda_{_wk}", step=1, format="%d")
 
                         # 決算短信の抽出値があれば予想値・DPSにプリフィル
                         tanshin = st.session_state.get('tanshin_forecasts', {}).get(company.get('code', ''), {})
@@ -1301,13 +1306,13 @@ render();
                         with col3:
                             st.markdown("**BS**")
                             cash = st.number_input("現金及び預金", value=int(company.get('cash') or 0),
-                                                   key=f"cash_{idx}", step=1, format="%d")
+                                                   key=f"cash_{_wk}", step=1, format="%d")
                             debt = st.number_input("有利子負債", value=int(company.get('total_debt') or 0),
-                                                   key=f"debt_{idx}", step=1, format="%d")
+                                                   key=f"debt_{_wk}", step=1, format="%d")
                             eq = st.number_input("純資産", value=int(company.get('equity_parent') or 0),
-                                                 key=f"eq_{idx}", step=1, format="%d")
+                                                 key=f"eq_{_wk}", step=1, format="%d")
                             dps = st.number_input("DPS（実績配当・円）", value=_dps_default,
-                                                  key=f"dps_{idx}", step=1.0, format="%.1f")
+                                                  key=f"dps_{_wk}", step=1.0, format="%.1f")
 
                         col4, col5 = st.columns(2)
                         with col4:
@@ -1315,14 +1320,14 @@ render();
                             if tanshin:
                                 st.caption("◆ 決算短信から自動プリフィル済み")
                             rev_e = st.number_input("売上高予想", value=_rev_e_default,
-                                                    key=f"reve_{idx}", step=1, format="%d")
+                                                    key=f"reve_{_wk}", step=1, format="%d")
                             op_e = st.number_input("営業利益予想", value=_op_e_default,
-                                                   key=f"ope_{idx}", step=1, format="%d")
+                                                   key=f"ope_{_wk}", step=1, format="%d")
                             ni_e = st.number_input("純利益予想", value=_ni_e_default,
-                                                   key=f"nie_{idx}", step=1, format="%d")
+                                                   key=f"nie_{_wk}", step=1, format="%d")
                             da_e = st.number_input("減価償却費予想",
                                 value=_da_e_default,
-                                key=f"dae_{idx}", step=1, format="%d")
+                                key=f"dae_{_wk}", step=1, format="%d")
                             st.caption("減価償却費予想が存在しない場合、0のままにしてください。その状態で「データを反映」ボタンを押すと、直近年度末の減価償却費を使って簡便的に進行期のEBITDA予想を計算します。")
                             # EBITDA予想: 自動計算値を表示（編集不可）
                             _code_for_ebitda = company.get('code', '')
