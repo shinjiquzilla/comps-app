@@ -1395,7 +1395,7 @@ render();
                         with col4:
                             st.markdown("**予想値（進行期末）**")
                             if tanshin:
-                                st.caption("◆ 決算短信から自動プリフィル済み")
+                                st.caption("決算短信から自動プリフィル済み")
                             rev_e = _comma_input("売上高予想（百万円）", _rev_e_default, key=f"reve_{_wk}")
                             op_e = _comma_input("営業利益予想（百万円）", _op_e_default, key=f"ope_{_wk}")
                             ni_e = _comma_input("純利益予想（百万円）", _ni_e_default, key=f"nie_{_wk}")
