@@ -890,17 +890,22 @@ if st.session_state.generation_done:
             _display_json = _tbl_json.dumps(_col_display, ensure_ascii=False)
 
             # JavaScript付きHTMLテーブル（列ヘッダークリックでソート）
-            _table_height = 95 + len(df_summary) * 38
+            # 高さ: ヘッダー2行(70px) + 各行38px + スクロールバー(20px) + マージン(40px)
+            _table_height = 130 + len(df_summary) * 38
             import streamlit.components.v1 as components
             components.html(f"""
 <style>
-  body {{ margin:0; background:transparent; color:#333; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size:14px; }}
-  .table-wrap {{ overflow-x:auto; width:100%; }}
-  .table-wrap::-webkit-scrollbar {{ height:10px; }}
-  .table-wrap::-webkit-scrollbar-track {{ background:#f0f0f0; border-radius:5px; }}
-  .table-wrap::-webkit-scrollbar-thumb {{ background:#45b5e6; border-radius:5px; }}
+  body {{ margin:0; padding:0; background:transparent; color:#333; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size:14px; overflow:hidden; }}
+  .table-outer {{ position:relative; width:100%; }}
+  .table-wrap {{ overflow-x:scroll; width:100%; padding-bottom:4px; }}
+  .table-wrap::-webkit-scrollbar {{ height:12px; }}
+  .table-wrap::-webkit-scrollbar-track {{ background:#e8e8e8; border-radius:6px; }}
+  .table-wrap::-webkit-scrollbar-thumb {{ background:#45b5e6; border-radius:6px; min-width:40px; }}
   .table-wrap::-webkit-scrollbar-thumb:hover {{ background:#3a9cc4; }}
-  .table-wrap {{ scrollbar-width:auto; scrollbar-color:#45b5e6 #f0f0f0; }}
+  .table-wrap {{ scrollbar-width:auto; scrollbar-color:#45b5e6 #e8e8e8; }}
+  .shadow-right, .shadow-left {{ position:absolute; top:0; bottom:12px; width:40px; pointer-events:none; z-index:2; transition:opacity 0.3s; }}
+  .shadow-right {{ right:0; background:linear-gradient(to right, transparent, rgba(69,181,230,0.18)); }}
+  .shadow-left {{ left:0; background:linear-gradient(to left, transparent, rgba(69,181,230,0.18)); opacity:0; }}
   table {{ border-collapse:collapse; min-width:100%; }}
   th {{ padding:8px 12px; border-bottom:2px solid #45b5e6; cursor:pointer; user-select:none; background:#f5f7fa; color:#45b5e6; position:sticky; top:0; vertical-align:bottom; line-height:1.4; }}
   th:hover {{ background:#eaf6fc; }}
@@ -910,11 +915,15 @@ if st.session_state.generation_done:
   .sort-arrow.active {{ color:#45b5e6; }}
   .sub {{ font-size:11px; color:#2a8ab5; font-weight:normal; }}
 </style>
-<div class="table-wrap">
+<div class="table-outer">
+<div class="shadow-left" id="shadow-left"></div>
+<div class="shadow-right" id="shadow-right"></div>
+<div class="table-wrap" id="table-wrap">
 <table id="comps-table">
   <thead><tr id="header-row"></tr></thead>
   <tbody id="table-body"></tbody>
 </table>
+</div>
 </div>
 <script>
 const cols = {_cols_json};
@@ -971,7 +980,33 @@ function render() {{
     }});
     tb.appendChild(tr);
   }});
+  // Auto-resize iframe
+  requestAnimationFrame(() => {{
+    try {{
+      var fe = window.frameElement;
+      if (fe) fe.style.height = document.body.scrollHeight + 20 + 'px';
+    }} catch(e) {{}}
+  }});
+  updateShadows();
 }}
+
+// Scroll shadow indicators
+var wrap = document.getElementById('table-wrap');
+var shadowL = document.getElementById('shadow-left');
+var shadowR = document.getElementById('shadow-right');
+function updateShadows() {{
+  if (!wrap) return;
+  var maxSl = wrap.scrollWidth - wrap.clientWidth;
+  if (maxSl <= 2) {{
+    shadowL.style.opacity = '0';
+    shadowR.style.opacity = '0';
+    return;
+  }}
+  shadowL.style.opacity = wrap.scrollLeft > 5 ? '1' : '0';
+  shadowR.style.opacity = wrap.scrollLeft >= maxSl - 5 ? '0' : '1';
+}}
+wrap.addEventListener('scroll', updateShadows);
+
 render();
 </script>
 """, height=_table_height)
