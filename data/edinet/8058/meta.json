@@ -1,0 +1,21 @@
+{
+  "last_searched": "2026-02-28",
+  "search_days": 400,
+  "company_name": "三菱商事",
+  "docs": [
+    {
+      "docID": "S100VYM1",
+      "docTypeCode": "120",
+      "periodEnd": "2025-03-31",
+      "filerName": "三菱商事株式会社",
+      "secCode": "80580"
+    },
+    {
+      "docID": "S100X2QX",
+      "docTypeCode": "160",
+      "periodEnd": "2026-03-31",
+      "filerName": "三菱商事株式会社",
+      "secCode": "80580"
+    }
+  ]
+}

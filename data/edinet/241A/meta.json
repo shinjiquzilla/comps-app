@@ -1,0 +1,35 @@
+{
+  "last_searched": "2026-02-28",
+  "search_days": 400,
+  "company_name": "ＲＯＸＸ",
+  "docs": [
+    {
+      "docID": "S100VR6E",
+      "docTypeCode": "160",
+      "periodEnd": "2025-09-30",
+      "filerName": "株式会社ＲＯＸＸ",
+      "secCode": "241A0"
+    },
+    {
+      "docID": "S100XBM6",
+      "docTypeCode": "130",
+      "periodEnd": null,
+      "filerName": "株式会社ＲＯＸＸ",
+      "secCode": "241A0"
+    },
+    {
+      "docID": "S100XBM7",
+      "docTypeCode": "170",
+      "periodEnd": null,
+      "filerName": "株式会社ＲＯＸＸ",
+      "secCode": "241A0"
+    },
+    {
+      "docID": "S100XCWL",
+      "docTypeCode": "120",
+      "periodEnd": "2025-09-30",
+      "filerName": "株式会社ＲＯＸＸ",
+      "secCode": "241A0"
+    }
+  ]
+}

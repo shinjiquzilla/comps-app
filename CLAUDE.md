@@ -152,17 +152,20 @@ IFRS企業の`BondsAndBorrowings`（借入金＋社債合算）は`short_term_de
 - **ソート**: 列ヘッダークリックで昇順/降順トグル（▲▼アイコン付き）。生の数値データでソート後にフォーマット表示。
 - **フォーマット**: Python側で事前適用。整数列は桁区切りカンマ、マルチプルは`x`付き、配当利回りは`%`付き。
 - **右揃え**: 数値列すべてCSS `text-align:right`
-- **横スクロール**: テーブルが画面幅を超える場合、太め(10px)・グレー・丸角の見やすいスクロールバーを表示
+- **横スクロール**: テーブルが画面幅を超える場合、常時表示の太め(12px)・水色・丸角スクロールバー + 左右スクロールシャドウ（水色グラデーション）で横スクロール可能であることを視覚的に通知
+- **高さ自動調整**: iframeの高さをヘッダー2行(70px)+行数×38px+スクロールバー+余裕で計算し、さらにrequestAnimationFrameでコンテンツ実高さに動的リサイズ
 - Forward PERは決算短信の`ni_forecast`から動的再計算（決算短信パース処理をテーブル構築より先に実行することで即反映）
 
 ### 証券コード検証
 `validate_stock_code(code_4)` — yfinance `history(period="5d")` で東証に存在するか軽量チェック。ローカルにキャッシュ（EDINET/株価/tanshin）がある企業はyfinance不要。Supabase `companies`テーブルに存在する企業もスキップ。フォーマット検証（4桁英数字、2024年1月〜アルファベット対応: 241A等）は入力欄の下にリアルタイム表示。
 
 ### 手動補完UI
-- `st.form("manual_edit_form")`でラップ（入力ごとの再実行を防止、ホワイトアウト対策）
+- `st.form("manual_edit_form_{codes_hash}")`でラップ（企業セットごとにフォームキーを分離、入力ごとの再実行を防止）
+- widgetキーは企業コードベース（`name_6763`等）。インデックスベースだと異なる企業セット間でキーが衝突し古い値が残留する
 - 「データを反映」ボタン押下時に `st.toast` + `st.spinner` で処理中フィードバック表示
 - 株価・発行済株式数を手入力可能（yfinanceレート制限時の対応）
 - 予想値（進行期末）: 売上高予想・営業利益予想・純利益予想・減価償却費予想・EBITDA予想を入力可能
+- **再生成時のデータ保持**: tanshin_forecastsはDBから再読込（`_load_forecasts_cache()`）、EBITDA予想はop_forecast+da_ltmから事前計算して復元。session stateのみに保存されるデータ（`_ebitda_calc`）はセッション切れで消失するため、表示前に毎回再計算
 - **EBITDA予想の計算ロジック**:
   - EBITDA予想は`st.metric`で読み取り専用表示（`st.form`内のwidget更新制約を回避）
   - 「データを反映」押下時に自動計算: `営業利益予想 + D&A` → session_stateに保存
@@ -235,6 +238,11 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supaba
 | 8053 | 住友商事 | IFRS | 3月 | OK | OK | — | |
 | 8058 | 三菱商事 | IFRS | 3月 | OK | OK | — | 営業利益はEDINET CSV非収録→手動入力 |
 
+### その他Supabase登録済み企業
+| コード | 会社名 | 備考 |
+|--------|--------|------|
+| 241A | ROXX | EDINET/株価保存済み（yuho項目少なめ） |
+
 ## デプロイ
 - **Streamlit Cloud**: `shinjiquzilla/comps-app` リポジトリ main ブランチ連携
 - **URL**: `comps-app-msdep7hegjdzmqjr3r4smg.streamlit.app`
@@ -259,6 +267,12 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supaba
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
+| 2026/2/28 | e51cf3b | EBITDA予想をDB予想値+D&A実績から事前計算して復元 |
+| 2026/2/28 | 0408912 | 再生成時にtanshin_forecastsをDBから再読込（予想値消失防止） |
+| 2026/2/28 | 145b698 | tanshin_forecastsをpopではなく空dictで初期化（AttributeError修正） |
+| 2026/2/28 | 7501cf2 | 手動補完フォーム: widgetキーを企業コードベースに変更（データ残留修正） |
+| 2026/2/28 | b4456bf | サマリーテーブル: 高さ自動調整・横スクロールバー常時表示・スクロールシャドウ追加 |
+| 2026/2/28 | — | 8053/8058/241AのEDINET+株価データをSupabaseに投入 |
 | 2026/2/27 | — | フッターからバージョン番号を削除（git履歴で十分なため） |
 | 2026/2/27 | 9555d29 | IFRS D&A: DepreciationExpenseOpeCFIFRS追加（三菱商事等の総合商社対応） |
 | 2026/2/27 | — | EBITDA予想をst.metric表示に変更（st.form内widget更新制約の回避） |
@@ -318,3 +332,5 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supaba
 - IFRS企業のリース負債（`OtherFinancialLiabilities`）は`BondsAndBorrowings`と分離されている場合があり、現状はBondsAndBorrowingsのみ計上。すかいらーく等のIFRS16リース負債は含まれていない可能性がある
 - 2702（マクドナルド）・3197（すかいらーく）は12月決算。Forward PER用の決算短信（Q3）が未アップロード
 - IFRS総合商社（8058三菱商事等）はEDINET CSVに連結営業利益が含まれない → 手動入力 or 決算短信PDF必須
+- Supabase保存関数の`except Exception: pass`は無言失敗の原因。`companies`テーブルにだけ入って`financials`が空のパターンに注意（8053/8058/241Aで発生済み→手動投入で解決）
+- EBITDA予想はDBの`tanshin_forecasts`に保存されない（session stateのみ）。op_forecast+da_ltmから毎回再計算で対応中
