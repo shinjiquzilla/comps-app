@@ -56,6 +56,20 @@ import json as _json
 from pathlib import Path as _Path
 
 _FORECASTS_FILE = _Path(__file__).parent / "data" / "tanshin_forecasts.json"
+
+
+def _comma_input(label, value, key, is_float=False, decimals=1):
+    """桁区切りカンマ付きテキスト入力。内部的にはint/floatを返す。"""
+    if is_float:
+        formatted = f"{value:,.{decimals}f}" if value else "0"
+    else:
+        formatted = f"{int(value):,}" if value else "0"
+    raw = st.text_input(label, value=formatted, key=key)
+    try:
+        cleaned = raw.replace(",", "").replace("，", "").strip()
+        return float(cleaned) if is_float else int(cleaned)
+    except (ValueError, TypeError):
+        return float(value) if is_float else int(value or 0)
 _TANSHIN_DATA_BASE = _Path(__file__).parent / "data" / "tanshin"
 
 
@@ -1345,23 +1359,18 @@ render();
                                                  'Jul': '7月', 'Aug': '8月', 'Oct': '10月', 'Nov': '11月'}
                             fy_end = st.text_input("決算月", value=_fy_month_display.get(_fy_raw, _fy_raw), key=f"fy_{_wk}")
                             st.markdown("**株価・株式**")
-                            stock_price = st.number_input("株価（円）", value=float(company.get('stock_price') or 0),
-                                                          key=f"price_{_wk}", step=1.0, format="%.0f")
-                            shares = st.number_input("発行済株式数（千株）", value=int(company.get('shares_outstanding') or 0),
-                                                     key=f"shares_{_wk}", step=1, format="%d")
+                            stock_price = _comma_input("株価（円）", float(company.get('stock_price') or 0),
+                                                       key=f"price_{_wk}", is_float=True, decimals=0)
+                            shares = _comma_input("発行済株式数（千株）", int(company.get('shares_outstanding') or 0),
+                                                   key=f"shares_{_wk}")
 
                         with col2:
                             st.markdown("**P&L - LTM**")
-                            rev = st.number_input("売上高", value=int(company.get('rev_ltm') or 0),
-                                                  key=f"rev_{_wk}", step=1, format="%d")
-                            op = st.number_input("営業利益", value=int(company.get('op_ltm') or 0),
-                                                 key=f"op_{_wk}", step=1, format="%d")
-                            ni = st.number_input("純利益", value=int(company.get('ni_ltm') or 0),
-                                                 key=f"ni_{_wk}", step=1, format="%d")
-                            da = st.number_input("減価償却費", value=int(company.get('da_ltm') or 0),
-                                                 key=f"da_{_wk}", step=1, format="%d")
-                            ebitda = st.number_input("EBITDA", value=int(company.get('ebitda_ltm') or 0),
-                                                     key=f"ebitda_{_wk}", step=1, format="%d")
+                            rev = _comma_input("売上高", int(company.get('rev_ltm') or 0), key=f"rev_{_wk}")
+                            op = _comma_input("営業利益", int(company.get('op_ltm') or 0), key=f"op_{_wk}")
+                            ni = _comma_input("純利益", int(company.get('ni_ltm') or 0), key=f"ni_{_wk}")
+                            da = _comma_input("減価償却費", int(company.get('da_ltm') or 0), key=f"da_{_wk}")
+                            ebitda = _comma_input("EBITDA", int(company.get('ebitda_ltm') or 0), key=f"ebitda_{_wk}")
 
                         # 決算短信の抽出値があれば予想値・DPSにプリフィル
                         tanshin = st.session_state.get('tanshin_forecasts', {}).get(company.get('code', ''), {})
@@ -1375,29 +1384,21 @@ render();
 
                         with col3:
                             st.markdown("**BS**")
-                            cash = st.number_input("現金及び預金", value=int(company.get('cash') or 0),
-                                                   key=f"cash_{_wk}", step=1, format="%d")
-                            debt = st.number_input("有利子負債", value=int(company.get('total_debt') or 0),
-                                                   key=f"debt_{_wk}", step=1, format="%d")
-                            eq = st.number_input("純資産", value=int(company.get('equity_parent') or 0),
-                                                 key=f"eq_{_wk}", step=1, format="%d")
-                            dps = st.number_input("DPS（実績配当・円）", value=_dps_default,
-                                                  key=f"dps_{_wk}", step=1.0, format="%.1f")
+                            cash = _comma_input("現金及び預金", int(company.get('cash') or 0), key=f"cash_{_wk}")
+                            debt = _comma_input("有利子負債", int(company.get('total_debt') or 0), key=f"debt_{_wk}")
+                            eq = _comma_input("純資産", int(company.get('equity_parent') or 0), key=f"eq_{_wk}")
+                            dps = _comma_input("DPS（実績配当・円）", _dps_default,
+                                               key=f"dps_{_wk}", is_float=True)
 
                         col4, col5 = st.columns(2)
                         with col4:
                             st.markdown("**予想値（進行期末）**")
                             if tanshin:
                                 st.caption("◆ 決算短信から自動プリフィル済み")
-                            rev_e = st.number_input("売上高予想", value=_rev_e_default,
-                                                    key=f"reve_{_wk}", step=1, format="%d")
-                            op_e = st.number_input("営業利益予想", value=_op_e_default,
-                                                   key=f"ope_{_wk}", step=1, format="%d")
-                            ni_e = st.number_input("純利益予想", value=_ni_e_default,
-                                                   key=f"nie_{_wk}", step=1, format="%d")
-                            da_e = st.number_input("減価償却費予想",
-                                value=_da_e_default,
-                                key=f"dae_{_wk}", step=1, format="%d")
+                            rev_e = _comma_input("売上高予想", _rev_e_default, key=f"reve_{_wk}")
+                            op_e = _comma_input("営業利益予想", _op_e_default, key=f"ope_{_wk}")
+                            ni_e = _comma_input("純利益予想", _ni_e_default, key=f"nie_{_wk}")
+                            da_e = _comma_input("減価償却費予想", _da_e_default, key=f"dae_{_wk}")
                             st.caption("減価償却費予想が存在しない場合、0のままにしてください。その状態で「データを反映」ボタンを押すと、直近年度末の減価償却費を使って簡便的に進行期のEBITDA予想を計算します。")
                             # EBITDA予想: 自動計算値を表示（編集不可）
                             _code_for_ebitda = company.get('code', '')
