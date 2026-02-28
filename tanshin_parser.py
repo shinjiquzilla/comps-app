@@ -1,8 +1,9 @@
 """
-決算短信PDFパーサー — 業績予想の自動抽出。
+決算短信PDFパーサー — 業績予想・経営成績実績の自動抽出。
 
-東証規定の決算短信フォーマットから業績予想テーブルをパースし、
-売上高・営業利益・経常利益・純利益・DPSを抽出する。
+東証規定の決算短信フォーマットから:
+- 業績予想テーブル（通期予想）をパース → parse_tanshin_pdf()
+- 経営成績（累計）テーブルから実績値をパース → parse_tanshin_actuals()
 
 パース失敗時は空dictを返し、手動入力にフォールバック。
 """
@@ -56,6 +57,206 @@ def parse_tanshin_pdf(pdf_bytes):
     dps = _extract_dps(full_text)
     if dps is not None:
         result['dps'] = dps
+
+    return result
+
+
+def parse_tanshin_actuals(pdf_bytes):
+    """
+    決算短信PDFの「経営成績（累計）」セクションから実績値を抽出。
+
+    決算短信1ページ目のテーブル構造（日本基準）:
+        売上高  営業利益  経常利益  親会社株主に帰属する当期(四半期)純利益
+        百万円 ％  百万円 ％  百万円 ％  百万円 ％
+        2026年３月期第３四半期
+        12,345  5.0  1,234  10.0  1,200  8.0  800  12.0
+        2025年３月期第３四半期
+        11,800  3.0  1,100  5.0  1,100  4.0  700  6.0
+
+    Parameters:
+        pdf_bytes: PDFファイルのバイト列
+
+    Returns:
+        dict with keys (百万円単位):
+            rev_actual: 売上高（当期累計）
+            op_actual: 営業利益（当期累計）
+            ni_actual: 純利益（当期累計）
+            rev_prior: 売上高（前年同期累計）
+            op_prior: 営業利益（前年同期累計）
+            ni_prior: 純利益（前年同期累計）
+        パース失敗時は空dict
+    """
+    if fitz is None:
+        return {}
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        return {}
+
+    # 最初の2ページからテキストを抽出（経営成績は通常1ページ目）
+    full_text = ""
+    for page_num in range(min(2, len(doc))):
+        full_text += doc[page_num].get_text() + "\n"
+    doc.close()
+
+    if not full_text.strip():
+        return {}
+
+    return _extract_actuals(full_text)
+
+
+def _extract_actuals(text):
+    """
+    経営成績セクションから当期・前年同期の実績値を抽出。
+
+    テキスト中のパターン:
+    1. 「連結経営成績」or「経営成績」ラベルを検出
+    2. 「売上高」「営業利益」等のヘッダーを確認
+    3. 期間ラベル（例: 2026年３月期第３四半期）の後に続く数値行から実績を取得
+    4. 当期 → 前年同期の順で2行取得
+
+    数値と増減率（%）が交互に並ぶ:
+        12,345  5.0  1,234  10.0  1,200  8.0  800  12.0
+    整数値のみを収集（小数 = 増減率をスキップ）。
+
+    IFRS企業の列構造（7列）:
+        売上収益, 事業利益, 営業利益, 税引前利益, 当期利益, 親会社帰属当期利益, 包括利益
+    J-GAAP企業の列構造（4列）:
+        売上高, 営業利益, 経常利益, 純利益
+    """
+    result = {}
+    lines = text.split('\n')
+
+    # IFRS判定: 決算短信タイトルに「ＩＦＲＳ」「IFRS」が含まれるか
+    is_ifrs = bool(re.search(r'ＩＦＲＳ|IFRS', text[:500]))
+
+    # IFRS列数をヘッダーから推定（事業利益があれば7列構造）
+    has_jigyou = bool(re.search(r'事業利益', text[:1500]))
+
+    # 経営成績セクションを探す
+    actuals_section = False
+    found_header = False
+    data_rows = []
+
+    for i, line in enumerate(lines):
+        ls = line.strip()
+
+        # 経営成績セクションの開始を検出
+        if re.search(r'連結経営成績|経営成績', ls) and not re.search(r'予想', ls):
+            actuals_section = True
+            continue
+
+        if not actuals_section:
+            continue
+
+        # ヘッダー行の確認（売上高/売上収益が含まれる行）
+        if re.search(r'売上[高收収]|売上収益', ls) and not found_header:
+            found_header = True
+            continue
+
+        # 業績予想セクションに入ったら終了
+        if re.search(r'業績予想|配当|１株当たり|1株当たり|財政状態', ls):
+            break
+
+        # 期間ラベルの検出（例: 2026年３月期第３四半期, 2025年12月期）
+        period_match = re.match(
+            r'(\d{4})\s*年\s*[０-９\d]{1,2}\s*月\s*期(?:第[１-３1-3]四半期)?',
+            ls
+        )
+        if period_match:
+            # この行自体に数値が含まれている場合（同一行パターン）
+            all_nums = re.findall(r'[△▲\-]?[\d,]+\.?\d*', ls)
+            int_values = []
+            for n in all_nums:
+                if '.' in n:
+                    continue  # 小数 = 増減率 → スキップ
+                val = _parse_amount(n)
+                if val is not None:
+                    # 年号の数字（2024, 2025等）を除外
+                    if val > 2000 and val < 2100:
+                        continue
+                    int_values.append(val)
+
+            if len(int_values) >= 4:
+                data_rows.append(int_values)
+            else:
+                # 後続行から数値を収集（PyMuPDFがセル別抽出する場合）
+                collected = []
+                for j in range(i + 1, min(i + 20, len(lines))):
+                    next_line = lines[j].strip()
+                    if not next_line:
+                        continue
+                    # 次の期間ラベルや別セクションに到達したら終了
+                    if re.match(r'\d{4}\s*年', next_line):
+                        break
+                    if re.search(r'業績予想|配当|１株当たり|1株当たり|財政状態', next_line):
+                        break
+                    # 「百万円」「％」のみの行はスキップ
+                    if re.match(r'^[百万円％%\s]+$', next_line):
+                        continue
+                    nums_in_line = re.findall(r'[△▲\-]?[\d,]+\.?\d*', next_line)
+                    for n in nums_in_line:
+                        if '.' in n:
+                            continue
+                        val = _parse_amount(n)
+                        if val is not None:
+                            collected.append(val)
+                if len(collected) >= 4:
+                    data_rows.append(collected)
+            continue
+
+        # データ行（期間ラベルなしで数値が並ぶ場合）
+        if found_header and not period_match:
+            all_nums = re.findall(r'[△▲\-]?[\d,]+\.?\d*', ls)
+            int_values = []
+            for n in all_nums:
+                if '.' in n:
+                    continue
+                val = _parse_amount(n)
+                if val is not None:
+                    if val > 2000 and val < 2100:
+                        continue
+                    int_values.append(val)
+            if len(int_values) >= 4:
+                data_rows.append(int_values)
+
+        # 2行取得できたら終了
+        if len(data_rows) >= 2:
+            break
+
+    # 列インデックスの決定
+    # J-GAAP (4列): [売上高, 営業利益, 経常利益, 純利益]
+    #   → rev=0, op=1, ni=3
+    # IFRS (7列): [売上収益, 事業利益, 営業利益, 税引前利益, 当期利益, 親会社帰属, 包括利益]
+    #   → rev=0, op=2, ni=5
+    # IFRS (事業利益なし, 6列): [売上収益, 営業利益, 税引前利益, 当期利益, 親会社帰属, 包括利益]
+    #   → rev=0, op=1, ni=4
+    if is_ifrs and has_jigyou:
+        op_idx, ni_idx = 2, 5
+    elif is_ifrs:
+        op_idx, ni_idx = 1, 4
+    else:
+        op_idx, ni_idx = 1, 3
+
+    def _extract_row(row):
+        """行データからrev, op, niを抽出。"""
+        rev = row[0] if len(row) > 0 else None
+        op = row[op_idx] if len(row) > op_idx else None
+        ni = row[ni_idx] if len(row) > ni_idx else None
+        return rev, op, ni
+
+    if len(data_rows) >= 1:
+        rev, op, ni = _extract_row(data_rows[0])
+        result['rev_actual'] = rev
+        result['op_actual'] = op
+        result['ni_actual'] = ni
+
+    if len(data_rows) >= 2:
+        rev, op, ni = _extract_row(data_rows[1])
+        result['rev_prior'] = rev
+        result['op_prior'] = op
+        result['ni_prior'] = ni
 
     return result
 
