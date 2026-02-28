@@ -776,6 +776,24 @@ if st.session_state.generation_done:
                             _save_forecasts_cache(st.session_state.tanshin_forecasts)
                             break
 
+            # --- EBITDA予想の事前計算（DB保存済みforecast + da_ltm実績から復元） ---
+            if '_ebitda_calc' not in st.session_state:
+                st.session_state['_ebitda_calc'] = {}
+            if '_ebitda_approx' not in st.session_state:
+                st.session_state['_ebitda_approx'] = {}
+            for _c in companies_for_config:
+                _code = _c.get('code', '')
+                if _code and _code not in st.session_state['_ebitda_calc']:
+                    _fc = st.session_state.get('tanshin_forecasts', {}).get(_code, {})
+                    _op_fc = _fc.get('op_forecast') or _c.get('op_forecast') or 0
+                    _da_fc = _c.get('da_forecast') or 0
+                    _da_ltm_val = int(_c.get('da_ltm') or 0)
+                    if _op_fc:
+                        _da_val = _da_fc if _da_fc else _da_ltm_val
+                        if _da_val:
+                            st.session_state['_ebitda_calc'][_code] = _op_fc + _da_val
+                            st.session_state['_ebitda_approx'][_code] = (_da_fc == 0)
+
             # --- サマリーテーブル ---
             st.subheader("取得データ一覧")
 
