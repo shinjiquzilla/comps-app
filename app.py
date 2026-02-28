@@ -1395,10 +1395,10 @@ render();
                             st.markdown("**予想値（進行期末）**")
                             if tanshin:
                                 st.caption("◆ 決算短信から自動プリフィル済み")
-                            rev_e = _comma_input("売上高予想", _rev_e_default, key=f"reve_{_wk}")
-                            op_e = _comma_input("営業利益予想", _op_e_default, key=f"ope_{_wk}")
-                            ni_e = _comma_input("純利益予想", _ni_e_default, key=f"nie_{_wk}")
-                            da_e = _comma_input("減価償却費予想", _da_e_default, key=f"dae_{_wk}")
+                            rev_e = _comma_input("売上高予想（百万円）", _rev_e_default, key=f"reve_{_wk}")
+                            op_e = _comma_input("営業利益予想（百万円）", _op_e_default, key=f"ope_{_wk}")
+                            ni_e = _comma_input("純利益予想（百万円）", _ni_e_default, key=f"nie_{_wk}")
+                            da_e = _comma_input("減価償却費予想（百万円）", _da_e_default, key=f"dae_{_wk}")
                             st.caption("減価償却費予想が存在しない場合、0のままにしてください。その状態で「データを反映」ボタンを押すと、直近年度末の減価償却費を使って簡便的に進行期のEBITDA予想を計算します。")
                             # EBITDA予想: 自動計算値を表示（編集不可）
                             _code_for_ebitda = company.get('code', '')
