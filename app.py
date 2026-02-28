@@ -1334,6 +1334,7 @@ render();
 
             # --- 手動補完セクション ---
             st.subheader("手動データ補完")
+            st.caption("取得データから自動プリフィル済み。必要に応じ、直接データを修正可能")
 
             edited_companies = []
 
