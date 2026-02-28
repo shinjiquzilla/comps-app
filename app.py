@@ -167,9 +167,9 @@ st.set_page_config(
 import base64 as _b64
 _logo_path = _Path(__file__).parent / "logo.png"
 _logo_b64 = _b64.b64encode(_logo_path.read_bytes()).decode() if _logo_path.exists() else ""
-st.markdown(f"""
-<div style="display:flex; align-items:center; gap:12px; margin-bottom:4px;">
-  <img src="data:image/png;base64,{_logo_b64}" style="height:40px; width:auto;" alt="logo">
+st.markdown(f'<img src="data:image/png;base64,{_logo_b64}" style="height:40px; width:auto; margin-bottom:8px;" alt="logo">', unsafe_allow_html=True)
+st.markdown("""
+<div style="margin-bottom:4px;">
   <span style="font-size:2rem; font-weight:700; color:#333333;">類似上場企業比較分析（Comps）自動生成ツール</span>
 </div>
 """, unsafe_allow_html=True)
