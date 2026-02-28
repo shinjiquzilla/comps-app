@@ -1,11 +1,15 @@
 """
 Financial Calculator - LTM計算・EBITDA・EV・マルチプル算出。
 
-CLAUDE.md の計算ロジック準拠:
-- LTM = 通期(FY) - H1(前期) + H1(今期)
+Calendarize LTM対応:
+- Q3パターン (H1ベース): LTM = yuho_FY - hanki_prior_H1 + hanki_current_H1
+- Q2/Q4パターン (決算短信): LTM = yuho_FY - tanshin_prior_Q + tanshin_current_Q
+- FY/Q1パターン: LTM = yuho_FY そのまま
 - EBITDA = 営業利益 + D&A
 - EV = 時価総額 + 有利子負債 - 現金
 """
+
+from datetime import date
 
 
 def safe_div(a, b):
@@ -80,7 +84,215 @@ def calc_margins(revenue_ltm, op_ltm, ebitda_ltm):
     }
 
 
-def build_company_data(code_4, edinet_data, tdnet_data, stock_data):
+def determine_calendarize_pattern(fy_end_month, today=None):
+    """
+    決算月と現在日付から最適なCalendarizeパターンを決定。
+
+    45日ルール: 決算短信は四半期末から約45日後に公開
+    90日ルール: 有報・半期報は期末から約90日後に公開
+
+    Parameters:
+        fy_end_month: 決算月 (1-12)
+        today: 基準日 (default: 今日)
+
+    Returns:
+        str: 'Q4_PREV' / 'FY_TANSHIN' / 'Q1' / 'Q2' / 'Q3' / 'Q4'
+
+    例（3月決算、各データ公開時期）:
+        FY end 3/31 + 45日 = 5/15: FY通期短信公開
+        FY end 3/31 + 90日 = 6/29: 有報公開
+        Q1 end 6/30 + 45日 = 8/14: Q1短信公開
+        H1 end 9/30 + 90日 = 12/29: 半期報公開
+        Q3 end 12/31 + 45日 = 2/14: Q3短信公開
+
+    タイムライン:
+        4/1〜5/14  → Q4_PREV    (新データなし)
+        5/15〜6/28 → FY_TANSHIN (通期短信あり)
+        6/29〜8/13 → Q1         (有報あり)
+        8/14〜12/28→ Q2         (Q1短信あり)
+        12/29〜2/13→ Q3         (半期報あり)
+        2/14〜3/31 → Q4         (Q3短信あり)
+    """
+    import calendar
+    if today is None:
+        today = date.today()
+
+    m = fy_end_month
+
+    def _quarter_end_date(base_month, offset_months):
+        """基準月からoffset_months後の月末日を返す。"""
+        target_month = ((base_month - 1 + offset_months) % 12) + 1
+        # 年の計算: FY年度を求める
+        fy_year = today.year if today.month > m else today.year - 1
+        if today.month == m:
+            fy_year = today.year - 1
+        # offset_monthsから年をずらす
+        target_year = fy_year + (base_month - 1 + offset_months) // 12
+        last_day = calendar.monthrange(target_year, target_month)[1]
+        return date(target_year, target_month, last_day)
+
+    # 各四半期末日を計算
+    fy_end = _quarter_end_date(m, 0)       # FY末
+    q1_end = _quarter_end_date(m, 3)       # Q1末
+    h1_end = _quarter_end_date(m, 6)       # H1末
+    q3_end = _quarter_end_date(m, 9)       # Q3末
+
+    # todayが前年度にいる場合の調整
+    if today <= fy_end:
+        # 前年度のQ3短信が使えるか確認
+        prev_q3_end = _quarter_end_date(m, 9 - 12)  # 前年度Q3末
+        days_since_prev_q3 = (today - prev_q3_end).days
+        if days_since_prev_q3 >= 45:
+            return 'Q4'
+        return 'Q3'
+
+    # FY末からの経過日数で判定
+    days_since_fy = (today - fy_end).days
+    days_since_q1 = (today - q1_end).days
+    days_since_h1 = (today - h1_end).days
+    days_since_q3 = (today - q3_end).days
+
+    # 逆順に判定（最新パターンから）
+    if days_since_q3 >= 45:
+        return 'Q4'
+    if days_since_h1 >= 90:
+        return 'Q3'
+    if days_since_q1 >= 45:
+        return 'Q2'
+    if days_since_fy >= 90:
+        return 'Q1'
+    if days_since_fy >= 45:
+        return 'FY_TANSHIN'
+    if days_since_fy >= 0:
+        return 'Q4_PREV'
+
+    return 'Q4'  # フォールバック
+
+
+# フォールバックチェーン: Q4 → Q3 → Q2 → Q1 → FY_TANSHIN → yuho_FY
+_FALLBACK_CHAIN = ['Q4', 'Q3', 'Q2', 'Q1', 'FY_TANSHIN', 'Q4_PREV']
+
+
+def calc_ltm_calendarized(pattern, yuho, hanki, hanki_prior, tanshin_actuals):
+    """
+    Calendarizeパターンに応じたLTM計算。
+
+    Parameters:
+        pattern: str — determine_calendarize_pattern() の戻り値
+        yuho: dict — 有報データ (revenue, operating_income, net_income)
+        hanki: dict — 今期半期報データ
+        hanki_prior: dict — 前期半期報データ
+        tanshin_actuals: dict — 決算短信実績値
+            {
+                'Q3': {'rev_actual': ..., 'op_actual': ..., 'ni_actual': ...,
+                       'rev_prior': ..., 'op_prior': ..., 'ni_prior': ...},
+                'FY': {...},
+                ...
+            }
+
+    Returns:
+        (rev_ltm, op_ltm, ni_ltm, used_pattern) — used_patternは実際に使用したパターン
+    """
+    if tanshin_actuals is None:
+        tanshin_actuals = {}
+
+    fy_rev = yuho.get('revenue')
+    fy_op = yuho.get('operating_income')
+    fy_ni = yuho.get('net_income')
+
+    # パターン実行関数
+    def _try_pattern(p):
+        """パターンpでLTMを計算。成功すれば(rev, op, ni)、失敗すればNone。"""
+        if p == 'Q4_PREV':
+            # 前年度のQ4 = 有報FYそのまま
+            if fy_rev is not None:
+                return fy_rev, fy_op, fy_ni
+            return None
+
+        if p == 'FY_TANSHIN':
+            # 通期決算短信の実績値
+            fy_data = tanshin_actuals.get('FY')
+            if fy_data and fy_data.get('rev_actual') is not None:
+                return (fy_data['rev_actual'],
+                        fy_data.get('op_actual'),
+                        fy_data.get('ni_actual'))
+            return None
+
+        if p == 'Q1':
+            # 有報のFY値そのまま（有報提出後、Q1短信前）
+            if fy_rev is not None:
+                return fy_rev, fy_op, fy_ni
+            return None
+
+        if p == 'Q2':
+            # LTM = yuho_FY + tanshin_Q1_cur - tanshin_Q1_prior
+            q1 = tanshin_actuals.get('Q1')
+            if q1 and fy_rev is not None and q1.get('rev_actual') is not None:
+                rev = fy_rev - (q1.get('rev_prior') or 0) + q1['rev_actual']
+                op = _ltm_calc(fy_op, q1.get('op_prior'), q1.get('op_actual'))
+                ni = _ltm_calc(fy_ni, q1.get('ni_prior'), q1.get('ni_actual'))
+                return rev, op, ni
+            return None
+
+        if p == 'Q3':
+            # LTM = yuho_FY + hanki_H1_cur - hanki_H1_prior (現行ロジック)
+            h1_rev = hanki.get('revenue')
+            prior_h1_rev = hanki_prior.get('revenue')
+            if fy_rev is not None and h1_rev is not None and prior_h1_rev is not None:
+                rev = calc_ltm(fy_rev, prior_h1_rev, h1_rev)
+                op = calc_ltm(fy_op, hanki_prior.get('operating_income'),
+                              hanki.get('operating_income'))
+                ni = calc_ltm(fy_ni, hanki_prior.get('net_income'),
+                              hanki.get('net_income'))
+                return rev, op, ni
+            # フォールバック: 半期報がなければ決算短信Q2で代替
+            q2 = tanshin_actuals.get('Q2')
+            if q2 and fy_rev is not None and q2.get('rev_actual') is not None:
+                rev = fy_rev - (q2.get('rev_prior') or 0) + q2['rev_actual']
+                op = _ltm_calc(fy_op, q2.get('op_prior'), q2.get('op_actual'))
+                ni = _ltm_calc(fy_ni, q2.get('ni_prior'), q2.get('ni_actual'))
+                return rev, op, ni
+            return None
+
+        if p == 'Q4':
+            # LTM = yuho_FY + tanshin_Q3_cur - tanshin_Q3_prior
+            q3 = tanshin_actuals.get('Q3')
+            if q3 and fy_rev is not None and q3.get('rev_actual') is not None:
+                rev = fy_rev - (q3.get('rev_prior') or 0) + q3['rev_actual']
+                op = _ltm_calc(fy_op, q3.get('op_prior'), q3.get('op_actual'))
+                ni = _ltm_calc(fy_ni, q3.get('ni_prior'), q3.get('ni_actual'))
+                return rev, op, ni
+            return None
+
+        return None
+
+    def _ltm_calc(fy_val, prior_val, current_val):
+        """単一項目のLTM = FY - prior + current。Noneセーフ。"""
+        if fy_val is None or prior_val is None or current_val is None:
+            return fy_val  # フォールバック: FY値
+        return fy_val - prior_val + current_val
+
+    # 指定パターンから試行、失敗したらフォールバック
+    # フォールバックチェーンの中で pattern 以降を試す
+    try:
+        start_idx = _FALLBACK_CHAIN.index(pattern)
+    except ValueError:
+        start_idx = 0
+
+    chain = _FALLBACK_CHAIN[start_idx:]
+
+    for p in chain:
+        result = _try_pattern(p)
+        if result is not None:
+            rev, op, ni = result
+            return rev, op, ni, p
+
+    # 全パターン失敗: 有報FY値をフォールバック
+    return fy_rev, fy_op, fy_ni, 'yuho_FY'
+
+
+def build_company_data(code_4, edinet_data, tdnet_data, stock_data,
+                       tanshin_actuals=None):
     """
     各ソースのデータを統合して comps_generator.py が期待する形式に変換。
 
@@ -89,6 +301,9 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data):
         edinet_data: dict with keys 'yuho_data', 'hanki_data', 'company_name'
         tdnet_data: dict with key 'forecast'
         stock_data: dict from stock_fetcher
+        tanshin_actuals: dict — 決算短信実績値 (Calendarize LTM用)
+            {'Q3': {'rev_actual': ..., ...}, 'FY': {...}, ...}
+            Noneの場合は従来のH1ベースLTMにフォールバック
 
     Returns: dict compatible with comps_generator.py JSON config format
     """
@@ -98,36 +313,61 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data):
     forecast = tdnet_data.get('forecast', {})
     company_name = edinet_data.get('company_name', '')
 
-    # --- LTM計算 ---
-    # 有報 = FY通期、半期報 = 今期H1、hanki_prior = 前期H1
-    # 正確なLTM = FY通期 − 前期H1 + 今期H1
-    # フォールバック: 前期H1が取れなければ通期値をそのまま使用（近似）
-
-    fy_revenue = yuho.get('revenue')
-    fy_op = yuho.get('operating_income')
-    fy_ni = yuho.get('net_income')
+    # --- LTM計算 (Calendarize対応) ---
     fy_da = yuho.get('depreciation')
-
-    h1_revenue = hanki.get('revenue')
-    h1_op = hanki.get('operating_income')
-    h1_ni = hanki.get('net_income')
     h1_da = hanki.get('depreciation')
-
-    prior_h1_revenue = hanki_prior.get('revenue')
-    prior_h1_op = hanki_prior.get('operating_income')
-    prior_h1_ni = hanki_prior.get('net_income')
     prior_h1_da = hanki_prior.get('depreciation')
 
-    # 正確なLTM（前期H1が取れた場合）、フォールバックは通期値
-    rev_ltm = calc_ltm(fy_revenue, prior_h1_revenue, h1_revenue)
-    if rev_ltm is None:
-        rev_ltm = fy_revenue
-    op_ltm = calc_ltm(fy_op, prior_h1_op, h1_op)
-    if op_ltm is None:
-        op_ltm = fy_op
-    ni_ltm = calc_ltm(fy_ni, prior_h1_ni, h1_ni)
-    if ni_ltm is None:
-        ni_ltm = fy_ni
+    # 決算月を推定（後でCalendarizeパターン判定に使用）
+    _fy_end_month_num = 3  # デフォルト3月
+    yuho_doc = edinet_data.get('yuho_doc')
+    hanki_doc = edinet_data.get('hanki_doc')
+    for _doc in [yuho_doc, hanki_doc]:
+        if _doc and _doc.get('periodEnd'):
+            _pe = _doc['periodEnd'].replace('/', '-')
+            _parts = _pe.split('-')
+            if len(_parts) >= 2:
+                _m = int(_parts[1])
+                if _doc is yuho_doc:
+                    _fy_end_month_num = _m
+                    break
+                else:
+                    _fy_end_month_num = ((_m - 1 + 6) % 12) + 1
+
+    # Calendarize: tanshin_actuals があれば最適パターンでLTM計算
+    calendarize_pattern = determine_calendarize_pattern(_fy_end_month_num)
+    used_pattern = None
+
+    if tanshin_actuals:
+        rev_ltm, op_ltm, ni_ltm, used_pattern = calc_ltm_calendarized(
+            calendarize_pattern, yuho, hanki, hanki_prior, tanshin_actuals
+        )
+    else:
+        # 従来ロジック: H1ベースLTM (後方互換)
+        fy_revenue = yuho.get('revenue')
+        fy_op = yuho.get('operating_income')
+        fy_ni = yuho.get('net_income')
+
+        h1_revenue = hanki.get('revenue')
+        h1_op = hanki.get('operating_income')
+        h1_ni = hanki.get('net_income')
+
+        prior_h1_revenue = hanki_prior.get('revenue')
+        prior_h1_op = hanki_prior.get('operating_income')
+        prior_h1_ni = hanki_prior.get('net_income')
+
+        rev_ltm = calc_ltm(fy_revenue, prior_h1_revenue, h1_revenue)
+        if rev_ltm is None:
+            rev_ltm = fy_revenue
+        op_ltm = calc_ltm(fy_op, prior_h1_op, h1_op)
+        if op_ltm is None:
+            op_ltm = fy_op
+        ni_ltm = calc_ltm(fy_ni, prior_h1_ni, h1_ni)
+        if ni_ltm is None:
+            ni_ltm = fy_ni
+        used_pattern = 'Q3' if hanki.get('revenue') and hanki_prior.get('revenue') else 'yuho_FY'
+
+    # D&Aは常にyuho/hankiベース（決算短信にD&Aがないため）
     da_ltm = calc_ltm(fy_da, prior_h1_da, h1_da)
     if da_ltm is None:
         da_ltm = fy_da
@@ -177,27 +417,10 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data):
     )
 
     # BS日付・決算月
-    hanki_doc = edinet_data.get('hanki_doc')
-    yuho_doc = edinet_data.get('yuho_doc')
     bs_date = ""
-    fy_end_month = 'Mar'  # デフォルト
     _month_map = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
                   7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
-    # periodEnd から決算月を推定（有報 > 半期報の順で確認）
-    for _doc in [yuho_doc, hanki_doc]:
-        if _doc and _doc.get('periodEnd'):
-            _pe = _doc['periodEnd'].replace('/', '-')
-            _parts = _pe.split('-')
-            if len(_parts) >= 2:
-                _m = int(_parts[1])
-                if _doc is yuho_doc:
-                    # 有報のperiodEndが年度末
-                    fy_end_month = _month_map.get(_m, 'Mar')
-                    break
-                else:
-                    # 半期報のperiodEndは中間期末 → +6ヶ月が年度末
-                    _fy_m = ((_m - 1 + 6) % 12) + 1
-                    fy_end_month = _month_map.get(_fy_m, 'Mar')
+    fy_end_month = _month_map.get(_fy_end_month_num, 'Mar')
     if hanki_doc:
         pe = hanki_doc.get('periodEnd', '')
         if pe:
@@ -228,7 +451,9 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data):
         'ni_forecast': forecast.get('ni_forecast'),
         'ebitda_forecast': ebitda_fwd,
         'dps': dps_actual,
-        # デバッグ用
+        # デバッグ・Calendarize用
         '_ev': ev,
         '_multiples': multiples,
+        '_calendarize_expected': calendarize_pattern,
+        '_calendarize_used': used_pattern,
     }
