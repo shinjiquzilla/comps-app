@@ -1,0 +1,44 @@
+{
+  "fy_end_month": 3,
+  "accounting": "IFRS",
+  "quarters": {
+    "FY": {
+      "fy_year": "2025-03-31",
+      "revenue": 53064.0,
+      "op": 4622.0,
+      "ni": 1792.0,
+      "equity": 29170.0,
+      "equity_ratio": 0.408
+    },
+    "Q3": {
+      "fy_year": "2026-03-31",
+      "revenue": 39879.0,
+      "op": 2189.0,
+      "ni": 1089.0,
+      "equity": 30885.0,
+      "equity_ratio": 0.424
+    },
+    "Q3_prior": {
+      "fy_year": "2025-03-31",
+      "revenue": 39681.0,
+      "op": 3650.0,
+      "ni": 1998.0,
+      "equity": 29409.0,
+      "equity_ratio": 0.448
+    }
+  },
+  "forecast": {
+    "rev_forecast": 53400.0,
+    "op_forecast": 3200.0,
+    "ni_forecast": 1700.0,
+    "eps_forecast": 73.76,
+    "dps_forecast": 30.0
+  },
+  "shares": {
+    "shares_issued": 23128.605,
+    "treasury_shares": 117.185
+  },
+  "_source": "jquants",
+  "_fetched_date": "2026-02-28",
+  "_raw_record_count": 22
+}

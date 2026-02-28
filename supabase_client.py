@@ -566,3 +566,53 @@ def download_tanshin_pdf(code, filename):
         return data
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# J-Quants Financial Summary
+# ---------------------------------------------------------------------------
+
+def save_jquants_fins(code, data):
+    """jquants_fins テーブルに upsert。data は jquants_client の整理済みdict。"""
+    sb = get_supabase()
+    if sb is None:
+        return
+    if not data:
+        return
+
+    upsert_company(code)
+
+    fetched = data.get('_fetched_date', date.today().isoformat())
+    row = {
+        "code": code,
+        "raw_data": data,
+        "fetched_date": fetched,
+    }
+    try:
+        sb.table("jquants_fins").upsert(
+            row, on_conflict="code,fetched_date"
+        ).execute()
+    except Exception:
+        pass
+
+
+def load_jquants_fins(code):
+    """
+    jquants_fins テーブルから最新の raw_data を返す。
+    Returns: dict | None
+    """
+    sb = get_supabase()
+    if sb is None:
+        return None
+    try:
+        resp = (sb.table("jquants_fins")
+                .select("raw_data")
+                .eq("code", code)
+                .order("fetched_date", desc=True)
+                .limit(1)
+                .execute())
+        if resp.data:
+            return resp.data[0].get("raw_data")
+        return None
+    except Exception:
+        return None

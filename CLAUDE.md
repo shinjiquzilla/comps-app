@@ -14,22 +14,26 @@ streamlit run app.py
 | ファイル | 役割 | 主要関数 |
 |---------|------|---------|
 | `app.py` | Streamlit UI・メインフロー | — |
-| `edinet_client.py` | EDINET API type=5 CSV取得・パース | `fetch_companies_batch()` |
+| `jquants_client.py` | **J-Quants `/v2/fins/summary` 取得・LTM計算・キャッシュ** | `fetch_fins_summary()`, `compute_ltm_from_jquants()` |
+| `edinet_client.py` | EDINET API type=5 CSV取得・パース（BS・D&Aのみ使用） | `fetch_companies_batch()` |
 | `tdnet_client.py` | TDnetスクレイピング+PyMuPDF PDF解析（**無効化済み**） | — |
 | `tanshin_parser.py` | 決算短信PDFパーサー（業績予想自動抽出＋経営成績実績抽出＋一括判定） | `parse_tanshin_pdf()`, `parse_tanshin_actuals()`, `identify_tanshin_pdf()`, `save_tanshin_pdf()` |
 | `stock_fetcher.py` | J-Quants API株価取得＋証券コード検証＋永続キャッシュ（yfinanceフォールバック） | `fetch_stock_info()`, `validate_stock_code()` |
-| `financial_calc.py` | LTM・EBITDA・EV・マルチプル計算（Calendarize対応） | `build_company_data()`, `determine_calendarize_pattern()`, `calc_ltm_calendarized()` |
+| `financial_calc.py` | LTM・EBITDA・EV・マルチプル計算（J-Quants優先・Calendarize対応） | `build_company_data()`, `determine_calendarize_pattern()`, `calc_ltm_calendarized()` |
 | `comps_generator.py` | Excel Comps表生成（openpyxl） | `generate_comps(config, path)` |
-| `supabase_client.py` | Supabase DB/Storage ラッパー（全データの永続化） | `load_edinet_data()`, `load_stock_data()`, `load_forecasts()` |
+| `supabase_client.py` | Supabase DB/Storage ラッパー（全データの永続化） | `load_edinet_data()`, `load_stock_data()`, `load_forecasts()`, `save_jquants_fins()`, `load_jquants_fins()` |
 | `auth.py` | Supabase GoTrue認証（オプション・無効化済み） | — |
-| `schema.sql` | PostgreSQLテーブル定義（5テーブル） | — |
+| `schema.sql` | PostgreSQLテーブル定義（6テーブル + jquants_fins） | — |
 | `migrate_to_supabase.py` | ローカルdata/ → Supabase一括移行スクリプト | — |
 
 ## データフロー
 ```
-証券コード → J-Quants API (株価・P&L・予想・株式数)  → financial_calc → app.py 表示
-           → EDINET有報 (BS: 現金・負債・D&A)         → build_company_data()
-                                                                      → comps_generator (Excel出力)
+証券コード → Step 0: 証券コード検証（キャッシュ or J-Quants or yfinance）
+           → Step 1: J-Quants /v2/fins/summary (P&L累計・予想・株式数・配当・純資産)
+           → Step 2: EDINET有報/半期報 (BS: 現金・負債・D&A のみ使用)
+           → Step 3: J-Quants /v2/equities/bars/daily (株価)
+           → build_company_data(jquants_data=..., edinet_data=..., stock_data=...)
+           → サマリーテーブル + comps_generator (Excel出力)
 ```
 
 ## データソース設計思想（2026/2/28〜）
@@ -81,6 +85,7 @@ J-Quantsは百万円単位（決算短信記載値）、EDINETは円単位。差
 | `financials` | パース済み財務データ（raw_data JSONBに全項目保持） | `(code, doc_type, period_end)` |
 | `stock_data` | 株価データ（日次） | `(code, fetched_date)` |
 | `tanshin_forecasts` | 業績予想＋経営成績実績（**決算期×四半期ごとに履歴保持、Calendarize LTM用**） | `(code, fy_month, period_type)` |
+| `jquants_fins` | J-Quants /v2/fins/summary キャッシュ（raw_data JSONB） | `(code, fetched_date)` |
 
 ### Storage
 - **バケット**: `tanshin-pdfs`（Private）
@@ -97,13 +102,26 @@ J-Quantsは百万円単位（決算短信記載値）、EDINETは円単位。差
 
 ### データ読み込み優先順位
 ```
-1. ローカル _parsed.json / stock.json（最速）
-2. Supabase DB（ローカルにない場合のフォールバック）
-3. EDINET API / yfinance（両方にない場合のみ）
+P&L・予想・株式数:
+  1. ローカル data/jquants/{code}/fins_summary.json（最速）
+  2. Supabase jquants_fins テーブル
+  3. J-Quants API /v2/fins/summary
+  4. フォールバック: EDINET CSV + 決算短信PDF（従来ロジック）
+
+BS（現金・負債・D&A）:
+  1. ローカル _parsed.json（最速）
+  2. Supabase financials テーブル
+  3. EDINET API type=5 CSV
+
+株価:
+  1. ローカル data/stock/{code}/stock.json
+  2. Supabase stock_data テーブル
+  3. J-Quants API /v2/equities/bars/daily
+  4. yfinance フォールバック
 ```
 
 ### データ書き込み
-EDINET取得・株価取得・決算短信アップロード時に**ローカル + Supabase の両方に自動保存**。
+J-Quants取得・EDINET取得・株価取得・決算短信アップロード時に**ローカル + Supabase の両方に自動保存**。
 git commit & pushによるデータ永続化は不要。
 
 ### 既知の問題: Supabase保存の無言失敗
@@ -173,7 +191,17 @@ IFRS企業の`BondsAndBorrowings`（借入金＋社債合算）は`short_term_de
 `equity_parent`（親会社帰属持分） → `shareholders_equity` → `net_assets` の優先順でフォールバック。IFRS企業は`equity_parent`のみ持つ場合がある。
 
 ### 配当利回りの計算
-**有報記載の直近終了フル年度の実績配当額** ÷ 現在株価。今期の予想配当額ではなく実績値を使用。DPSは`edinet_client.py`の`SUMMARY_ELEMENT_MAP`から自動取得（`jpcrp_cor:DividendPaidPerShareSummaryOfBusinessResults`）。
+**J-Quants `FDivAnn`（配当予想）を優先。ない場合は有報実績DPSにフォールバック。**
+J-Quantsデータがある場合: `FDivAnn`（年間配当予想額）÷ 現在株価。
+J-Quantsデータがない場合（従来ロジック）: 有報記載の直近終了フル年度の実績配当額 ÷ 現在株価。
+
+### J-Quants /v2/fins/summary によるLTM計算
+`jquants_client.py`の`compute_ltm_from_jquants(quarters)` — J-Quantsの四半期累計データから直接LTM計算。既存Calendarize 6パターンロジックは不要。
+```
+最新四半期が2QのFY2026/3 の場合:
+LTM = FY2025/3通期 - FY2025/3_2Q累計 + FY2026/3_2Q累計
+```
+`_organize_quarterly_data()` でAPIレスポンスの全レコードから当期/前年同期を整理。同一`CurPerType`で複数レコードがある場合は`DiscDate`最新を優先。
 
 ### 決算短信経営成績パーサー（Calendarize LTM用）
 `parse_tanshin_actuals(pdf_bytes)` — 決算短信1ページ目の「経営成績（累計）」セクションから当期・前年同期の実績値（売上高・営業利益・純利益）を抽出。IFRS企業の列構造（7列: 売上収益〜包括利益）にも対応し、営業利益と親会社帰属純利益を正しい列インデックスで取得。
@@ -322,6 +350,7 @@ streamlit, yfinance（フォールバック専用）, openpyxl, pymupdf, request
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
+| 2026/2/28 | — | J-Quants `/v2/fins/summary` メイン化: `jquants_client.py`新規作成、P&L・予想・株式数・DPSをJ-Quantsから取得、EDINETはBS・D&Aのみ使用に変更、`jquants_fins`テーブル追加 |
 | 2026/2/28 | 2d056cb | J-Quants API対応: 株価取得をyfinanceからJ-Quants APIに切り替え、発行済株式数をEDINET算出に変更 |
 | 2026/2/28 | bf029d7 | タイトル行右端にくじらキャピタルロゴ（横型PNG、base64埋め込み）を配置 |
 | 2026/2/28 | a7f2f37 | 手動補完フォーム: 全数値入力に桁区切りカンマ表示、予想値ラベルに（百万円）追記、説明文追加 |

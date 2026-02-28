@@ -292,7 +292,7 @@ def calc_ltm_calendarized(pattern, yuho, hanki, hanki_prior, tanshin_actuals):
 
 
 def build_company_data(code_4, edinet_data, tdnet_data, stock_data,
-                       tanshin_actuals=None):
+                       tanshin_actuals=None, jquants_data=None):
     """
     各ソースのデータを統合して comps_generator.py が期待する形式に変換。
 
@@ -304,6 +304,8 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data,
         tanshin_actuals: dict — 決算短信実績値 (Calendarize LTM用)
             {'Q3': {'rev_actual': ..., ...}, 'FY': {...}, ...}
             Noneの場合は従来のH1ベースLTMにフォールバック
+        jquants_data: dict — J-Quants /v2/fins/summary の整理済みデータ
+            Noneの場合は従来ロジック（EDINET+tanshin_actuals）
 
     Returns: dict compatible with comps_generator.py JSON config format
     """
@@ -312,6 +314,149 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data,
     hanki_prior = edinet_data.get('hanki_prior_data', {})
     forecast = tdnet_data.get('forecast', {})
     company_name = edinet_data.get('company_name', '')
+
+    # --- J-Quantsデータがある場合: P&L LTM・予想・株式数・純資産・DPSをJ-Quantsから取得 ---
+    if jquants_data:
+        from jquants_client import compute_ltm_from_jquants
+
+        quarters = jquants_data.get('quarters', {})
+        jq_forecast = jquants_data.get('forecast', {})
+        jq_shares = jquants_data.get('shares', {})
+
+        # 決算月・会計基準: J-Quantsから
+        _fy_end_month_num = jquants_data.get('fy_end_month', 3)
+        accounting_std = jquants_data.get('accounting', 'J-GAAP')
+
+        # P&L LTM: J-Quantsの四半期データから直接計算
+        rev_ltm, op_ltm, ni_ltm, used_pattern = compute_ltm_from_jquants(quarters)
+        calendarize_pattern = 'jquants_' + used_pattern
+
+        # 予想: J-Quantsから
+        rev_fwd = jq_forecast.get('rev_forecast')
+        op_fwd = jq_forecast.get('op_forecast')
+        ni_fwd = jq_forecast.get('ni_forecast')
+        eps_fwd = jq_forecast.get('eps_forecast')
+
+        # DPS: J-Quants予想を優先、なければ有報実績
+        dps = jq_forecast.get('dps_forecast')
+        if dps is None:
+            dps = yuho.get('dps')
+        dps_source = 'jquants_forecast' if jq_forecast.get('dps_forecast') is not None else 'yuho'
+
+        # 株式数: J-Quantsから（千株単位）
+        shares = None
+        _si = jq_shares.get('shares_issued')
+        _ts = jq_shares.get('treasury_shares') or 0
+        if _si is not None:
+            shares = _si - _ts
+
+        # 純資産: J-Quantsの最新四半期から
+        equity = None
+        equity_ratio = None
+        # 最新四半期から取得（Q3 > 2Q > Q1 > FY）
+        for _qk in ['Q3', '2Q', 'Q1', 'FY']:
+            _qd = quarters.get(_qk)
+            if _qd and _qd.get('equity') is not None:
+                equity = _qd['equity']
+                equity_ratio = _qd.get('equity_ratio')
+                break
+
+        if equity_ratio and equity_ratio > 1:
+            equity_ratio = equity_ratio / 100
+
+        # ---- 以下はEDINETから（J-Quantsにない） ----
+        # cash, total_debt → EV計算用
+        cash = hanki.get('cash') or yuho.get('cash')
+        total_debt = calc_total_debt(hanki) or calc_total_debt(yuho)
+
+        # depreciation → EBITDA計算用（D&Aは常にEDINETベース）
+        fy_da = yuho.get('depreciation')
+        h1_da = hanki.get('depreciation')
+        prior_h1_da = hanki_prior.get('depreciation')
+        da_ltm = calc_ltm(fy_da, prior_h1_da, h1_da)
+        if da_ltm is None:
+            da_ltm = fy_da
+
+        # EBITDA
+        ebitda_ltm = None
+        if op_ltm is not None and da_ltm is not None:
+            ebitda_ltm = op_ltm + da_ltm
+
+        # 予想 EBITDA
+        ebitda_fwd = None
+        if op_fwd is not None and da_ltm is not None:
+            ebitda_fwd = op_fwd + da_ltm
+
+        # 株価情報
+        stock_price = stock_data.get('stock_price')
+
+        # stock_dataの株式数はフォールバック（J-Quantsで取れない場合）
+        if shares is None:
+            shares = stock_data.get('shares_outstanding')
+        if shares is None:
+            _shares_issued = hanki.get('shares_issued') or yuho.get('shares_issued')
+            _treasury = hanki.get('treasury_shares') or yuho.get('treasury_shares') or 0
+            if _shares_issued is not None:
+                shares = _shares_issued - _treasury
+
+        # 時価総額
+        market_cap = stock_data.get('market_cap')
+        if market_cap is None and stock_price is not None and shares is not None:
+            market_cap = int(stock_price * shares / 1000)
+
+        # EV
+        ev = calc_ev(market_cap, total_debt, cash)
+
+        # マルチプル
+        multiples = calc_multiples(
+            market_cap, ev, ebitda_ltm, ebitda_fwd,
+            ni_fwd, equity, stock_price, dps
+        )
+
+        # BS日付・決算月
+        bs_date = ""
+        _month_map = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
+                      7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
+        fy_end_month = _month_map.get(_fy_end_month_num, 'Mar')
+        hanki_doc = edinet_data.get('hanki_doc')
+        if hanki_doc:
+            pe = hanki_doc.get('periodEnd', '')
+            if pe:
+                bs_date = pe.replace('-', '/')
+
+        return {
+            'code': code_4,
+            'name': company_name,
+            'sector': '',
+            'accounting': accounting_std,
+            'fy_end': fy_end_month,
+            'stock_price': stock_price,
+            'shares_outstanding': shares,
+            'market_cap': market_cap,
+            'bs_date': bs_date,
+            'cash': cash,
+            'total_debt': total_debt,
+            'equity_parent': equity,
+            'equity_ratio': equity_ratio,
+            'rev_ltm': rev_ltm,
+            'op_ltm': op_ltm,
+            'ni_ltm': ni_ltm,
+            'da_ltm': da_ltm,
+            'ebitda_ltm': ebitda_ltm,
+            'rev_forecast': rev_fwd,
+            'op_forecast': op_fwd,
+            'ni_forecast': ni_fwd,
+            'ebitda_forecast': ebitda_fwd,
+            'dps': dps,
+            '_ev': ev,
+            '_multiples': multiples,
+            '_calendarize_expected': calendarize_pattern,
+            '_calendarize_used': 'jquants_' + used_pattern,
+            '_data_source': 'jquants',
+            '_dps_source': dps_source,
+        }
+
+    # --- 従来ロジック（J-Quantsなし: EDINET + tanshin_actuals） ---
 
     # --- LTM計算 (Calendarize対応) ---
     fy_da = yuho.get('depreciation')

@@ -33,6 +33,7 @@ from stock_fetcher import fetch_stock_info, validate_stock_code, _load_stock_cac
 from financial_calc import build_company_data
 from comps_generator import generate_comps
 from tanshin_parser import parse_tanshin_pdf, parse_tanshin_actuals, save_tanshin_pdf, identify_tanshin_pdf
+from jquants_client import fetch_fins_summary, _load_local_cache as _load_jquants_cache
 
 # Supabase client (optional)
 try:
@@ -327,8 +328,8 @@ with st.sidebar:
 
     st.markdown("""
     **データソース:**
-    - EDINET API (有報・半期報)
-    - J-Quants API (株価)
+    - J-Quants API (P&L・予想・株式数・配当・株価)
+    - EDINET API (BS: 現金・負債・D&A)
     """)
 
 # ---------------------------------------------------------------------------
@@ -442,7 +443,8 @@ if generate_btn:
         _stock_base = Path(__file__).parent / "data" / "stock"
 
         # 各社のキャッシュ状況を事前確認
-        _cache_status = {}  # code -> {'edinet': bool, 'stock': bool, 'any': bool}
+        _jquants_base = Path(__file__).parent / "data" / "jquants"
+        _cache_status = {}  # code -> {'edinet': bool, 'stock': bool, 'jquants': bool, 'any': bool}
         for _c in codes:
             _has_edinet = (_edinet_base / _c / "meta.json").exists()
             _has_edinet_parsed = (
@@ -451,10 +453,12 @@ if generate_btn:
             )
             _has_stock = (_stock_base / _c / "stock.json").exists()
             _has_tanshin = (_tanshin_base / _c).is_dir() and any((_tanshin_base / _c).glob("*.pdf"))
+            _has_jquants = (_jquants_base / _c / "fins_summary.json").exists()
             _cache_status[_c] = {
                 'edinet': _has_edinet and _has_edinet_parsed,
                 'stock': _has_stock,
-                'any': _has_edinet or _has_stock or _has_tanshin,
+                'jquants': _has_jquants,
+                'any': _has_edinet or _has_stock or _has_tanshin or _has_jquants,
             }
 
         _all_fully_cached = all(
@@ -571,12 +575,16 @@ if generate_btn:
                 }
                 result['edinet_raw'] = edinet_data if edinet_data.get('yuho_data') or edinet_data.get('hanki_data') else None
 
-                # Calendarize: 決算短信実績値を読み込み
-                _ta = _load_tanshin_actuals_for_code(code)
+                # J-Quants fins/summary をキャッシュから読み込み
+                _jq_data = _load_jquants_cache(code)
+
+                # Calendarize: 決算短信実績値を読み込み（J-Quantsがない場合のフォールバック用）
+                _ta = _load_tanshin_actuals_for_code(code) if not _jq_data else None
 
                 try:
                     company = build_company_data(code, edinet_data, tdnet_data, stock_data,
-                                                tanshin_actuals=_ta if _ta else None)
+                                                tanshin_actuals=_ta if _ta else None,
+                                                jquants_data=_jq_data)
                     if not company.get('name') and stock_data.get('company_name_en'):
                         company['name'] = stock_data['company_name_en']
                     result['data'] = company
@@ -640,7 +648,25 @@ if generate_btn:
             codes = [c for c in codes if c in _valid_set]
             status_container.success(f"✅ {len(codes)}社の証券コードを確認しました。")
 
-            # Step 1: EDINET一括検索
+            # Step 1: J-Quants fins/summary 取得（EDINET前に実行）
+            _jquants_results = {}
+            status_container.info(f"◆ J-Quants: {len(codes)}社の財務サマリーを取得中...")
+            progress_bar.progress(0.15)
+            for _jq_i, _jq_code in enumerate(codes):
+                progress_text.text(f"  ◆ J-Quants: {_jq_code} ({_jq_i+1}/{len(codes)})")
+                try:
+                    _jq_data = fetch_fins_summary(_jq_code, use_cache=use_cache)
+                    if _jq_data:
+                        _jquants_results[_jq_code] = _jq_data
+                except Exception as _jq_e:
+                    st.session_state.errors.append(f"{_jq_code}: J-Quants: {_jq_e}")
+            if _jquants_results:
+                status_container.success(f"✅ J-Quants: {len(_jquants_results)}/{len(codes)}社の財務サマリーを取得しました。")
+            else:
+                status_container.info("◆ J-Quants: 財務サマリーの取得をスキップしました。")
+            progress_bar.progress(0.2)
+
+            # Step 2: EDINET一括検索
             edinet_results = {}
             if edinet_available:
                 # キャッシュ判定: ローカル + Supabase補完結果を活用
@@ -671,7 +697,7 @@ if generate_btn:
 
                 if uncached_codes:
                     def edinet_progress(current, total):
-                        progress_bar.progress(0.1 + current / total * 0.55)
+                        progress_bar.progress(0.2 + current / total * 0.45)
                         progress_text.text(f"  ◆ EDINET検索: {current}/{total}日 ({','.join(uncached_codes)})")
 
                     try:
@@ -697,7 +723,7 @@ if generate_btn:
             else:
                 st.session_state.errors.append("EDINET: API Key未設定（スキップ）")
 
-            # Step 2: 各社ごとに株価・計算
+            # Step 3: 各社ごとに株価・計算
             results = []
             for i, code in enumerate(codes):
                 result = {
@@ -730,11 +756,14 @@ if generate_btn:
                     result['errors'].append(f"株価: {e}")
 
                 progress_text.text(f"  ⟐ {code}: 計算中...")
-                # Calendarize: 決算短信実績値を読み込み
-                _ta = _load_tanshin_actuals_for_code(code)
+                # J-Quantsデータ
+                _jq_data = _jquants_results.get(code)
+                # Calendarize: 決算短信実績値を読み込み（J-Quantsがない場合のフォールバック用）
+                _ta = _load_tanshin_actuals_for_code(code) if not _jq_data else None
                 try:
                     company = build_company_data(code, edinet_data, tdnet_data, stock_data,
-                                                tanshin_actuals=_ta if _ta else None)
+                                                tanshin_actuals=_ta if _ta else None,
+                                                jquants_data=_jq_data)
                     if not company.get('name') and stock_data.get('company_name_en'):
                         company['name'] = stock_data['company_name_en']
                     result['data'] = company
@@ -964,7 +993,7 @@ if st.session_state.generation_done:
                 'EV/EBITDA LTM': 'EV/EBITDA<br><span class="sub">LTM</span>',
                 'Forward PER': 'PER<br><span class="sub">Forward</span>',
                 '直近四半期PBR': 'PBR<br><span class="sub">直近四半期末</span>',
-                '配当利回り': '配当利回り<br><span class="sub">直近年度末</span>',
+                '配当利回り': '配当利回り<br><span class="sub">予想</span>',
             }
 
             # テーブルデータをJSON化（ソート用に生数値も保持）
@@ -1248,8 +1277,9 @@ render();
                 code = comp.get('code', '')
                 if not code:
                     continue
+                # J-Quantsから予想が取れていればOK
                 tanshin = st.session_state.get('tanshin_forecasts', {}).get(code, {})
-                ni_forecast = tanshin.get('ni_forecast') or comp.get('ni_forecast')
+                ni_forecast = comp.get('ni_forecast') or tanshin.get('ni_forecast')
 
                 # 決算期を特定 & Calendarizeパターンから必要な決算短信を推定
                 _fy_label = ""

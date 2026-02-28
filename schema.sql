@@ -116,7 +116,18 @@ CREATE TABLE IF NOT EXISTS app_config (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- 7. jquants_fins — J-Quants /v2/fins/summary キャッシュ
+CREATE TABLE IF NOT EXISTS jquants_fins (
+  id SERIAL PRIMARY KEY,
+  code TEXT REFERENCES companies(code),
+  raw_data JSONB,
+  fetched_date DATE,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(code, fetched_date)
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_financials_code ON financials(code);
 CREATE INDEX IF NOT EXISTS idx_edinet_meta_code ON edinet_meta(code);
 CREATE INDEX IF NOT EXISTS idx_stock_data_code ON stock_data(code);
+CREATE INDEX IF NOT EXISTS idx_jquants_fins_code ON jquants_fins(code);
