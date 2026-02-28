@@ -200,7 +200,7 @@ IFRS企業の`BondsAndBorrowings`（借入金＋社債合算）は`short_term_de
 - **カスタムCSS注入**: `st.markdown(unsafe_allow_html=True)`でタブ、ボタン、number_input右寄せ、placeholder色等を追加調整
 - **タイトル**: SVGアイコン（棒グラフ風・水色）+ HTMLカスタムレンダリング
 - **絵文字不使用**: UI全体でUnicode記号（▶◆◇●⬇▸等）に統一
-- **`st.number_input`のformat制約**: `%,d`（桁区切り）は非対応。`%d`のみ使用可能
+- **数値入力の桁区切り**: `st.number_input`は`%,d`非対応のため、`st.text_input`ベースの`_comma_input()`ヘルパーで桁区切りカンマ表示を実現。表示時にカンマ付きフォーマット、読取時にカンマ除去してint/float変換
 
 ### 決算短信不足検出ロジック（決算月ベース）
 年度末から現在日付までの経過日数に基づき、要求する決算短信の種類を自動判定:
@@ -286,7 +286,9 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supaba
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
-| 2026/2/28 | — | Calendarize LTM: 6パターン対応（Q4_PREV/FY_TANSHIN/Q1/Q2/Q3/Q4）、parse_tanshin_actuals()追加、tanshin_forecasts実績カラム拡張 |
+| 2026/2/28 | bf029d7 | タイトル行右端にくじらキャピタルロゴ（横型PNG、base64埋め込み）を配置 |
+| 2026/2/28 | a7f2f37 | 手動補完フォーム: 全数値入力に桁区切りカンマ表示、予想値ラベルに（百万円）追記、説明文追加 |
+| 2026/2/28 | 7bde0a9〜028c423 | Calendarize LTM: 6パターン対応（Q4_PREV/FY_TANSHIN/Q1/Q2/Q3/Q4）、parse_tanshin_actuals()追加、tanshin_forecasts実績カラム拡張 |
 | 2026/2/28 | e51cf3b | EBITDA予想をDB予想値+D&A実績から事前計算して復元 |
 | 2026/2/28 | 0408912 | 再生成時にtanshin_forecastsをDBから再読込（予想値消失防止） |
 | 2026/2/28 | 145b698 | tanshin_forecastsをpopではなく空dictで初期化（AttributeError修正） |
