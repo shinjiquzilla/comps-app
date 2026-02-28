@@ -398,8 +398,20 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data,
 
     # 株価情報
     stock_price = stock_data.get('stock_price')
+
+    # 発行済株式数: stock_data（キャッシュ後方互換 + 手動補完）→ EDINET有報/半期報
     shares = stock_data.get('shares_outstanding')
+    if shares is None:
+        # EDINET経営指標等から算出: 発行済株式数 - 自己株式数（千株単位）
+        _shares_issued = hanki.get('shares_issued') or yuho.get('shares_issued')
+        _treasury = hanki.get('treasury_shares') or yuho.get('treasury_shares') or 0
+        if _shares_issued is not None:
+            shares = _shares_issued - _treasury  # 既に千株単位（edinet_client.pyで変換済み）
+
+    # 時価総額: stock_data（キャッシュ後方互換）→ 株価×発行済株式数から算出
     market_cap = stock_data.get('market_cap')
+    if market_cap is None and stock_price is not None and shares is not None:
+        market_cap = int(stock_price * shares / 1000)  # 千株×円÷1000 = 百万円
 
     # EV
     ev = calc_ev(market_cap, total_debt, cash)

@@ -5,7 +5,7 @@ Comps自動生成 Streamlit アプリ
 
 データソース:
 - EDINET API type=5 CSV: 有報・半期報告書の財務データ
-- yfinance: 最新株価・時価総額
+- J-Quants API: 最新株価（yfinanceフォールバック）
 
 使い方:
     streamlit run app.py
@@ -18,7 +18,7 @@ import time
 import traceback
 from datetime import datetime
 
-# SSL検証バイパス（社内ネットワーク対応）- yfinance/curl_cffi用
+# SSL検証バイパス（社内ネットワーク対応）- yfinanceフォールバック/curl_cffi用
 os.environ['CURL_CA_BUNDLE'] = ''
 os.environ['REQUESTS_CA_BUNDLE'] = ''
 
@@ -306,12 +306,29 @@ with st.sidebar:
         clear_cache()
         st.success("キャッシュを全削除しました。")
 
+    # J-Quants API Key（secrets → Supabase app_config）
+    default_jquants_key = ""
+    try:
+        if "jquants" in st.secrets:
+            default_jquants_key = st.secrets["jquants"].get("api_key", "")
+    except Exception:
+        pass
+    if not default_jquants_key and _HAS_SUPABASE:
+        try:
+            _sb = get_supabase()
+            if _sb:
+                _cfg = _sb.table("app_config").select("value").eq("key", "jquants_api_key").limit(1).execute()
+                if _cfg.data:
+                    default_jquants_key = _cfg.data[0].get("value", "")
+        except Exception:
+            pass
+
     st.divider()
 
     st.markdown("""
     **データソース:**
     - EDINET API (有報・半期報)
-    - yfinance (株価)
+    - J-Quants API (株価)
     """)
 
 # ---------------------------------------------------------------------------
@@ -704,7 +721,7 @@ if generate_btn:
                     progress_text.text(f"  ◇ {code}: キャッシュ読み込み...")
                 else:
                     status_container.info(f"◇ 株価: {code} ({i+1}/{len(codes)})")
-                    progress_text.text(f"  ◇ {code}: yfinanceから取得中...")
+                    progress_text.text(f"  ◇ {code}: 株価取得中...")
                 stock_data = {'stock_price': None, 'shares_outstanding': None, 'market_cap': None}
                 try:
                     stock_data = fetch_stock_info(code, use_cache=use_cache)
