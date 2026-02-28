@@ -168,13 +168,9 @@ import base64 as _b64
 _logo_path = _Path(__file__).parent / "logo.png"
 _logo_b64 = _b64.b64encode(_logo_path.read_bytes()).decode() if _logo_path.exists() else ""
 st.markdown(f"""
-<div style="position:fixed; top:12px; right:24px; z-index:9999;">
-  <img src="data:image/png;base64,{_logo_b64}" style="height:32px; width:auto;" alt="logo">
-</div>
-""", unsafe_allow_html=True)
-st.markdown("""
-<div style="margin-bottom:4px;">
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
   <span style="font-size:2rem; font-weight:700; color:#333333;">類似上場企業比較分析（Comps）自動生成ツール</span>
+  <img src="data:image/png;base64,{_logo_b64}" style="height:36px; width:auto;" alt="logo">
 </div>
 """, unsafe_allow_html=True)
 st.caption("証券コードを入力して「生成」ボタンを押すだけで、Compsを自動生成します。")
