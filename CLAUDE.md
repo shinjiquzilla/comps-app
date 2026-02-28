@@ -16,9 +16,9 @@ streamlit run app.py
 | `app.py` | Streamlit UI・メインフロー | — |
 | `edinet_client.py` | EDINET API type=5 CSV取得・パース | `fetch_companies_batch()` |
 | `tdnet_client.py` | TDnetスクレイピング+PyMuPDF PDF解析（**無効化済み**） | — |
-| `tanshin_parser.py` | 決算短信PDFパーサー（業績予想自動抽出＋一括判定） | `parse_tanshin_pdf()`, `identify_tanshin_pdf()`, `save_tanshin_pdf()` |
+| `tanshin_parser.py` | 決算短信PDFパーサー（業績予想自動抽出＋経営成績実績抽出＋一括判定） | `parse_tanshin_pdf()`, `parse_tanshin_actuals()`, `identify_tanshin_pdf()`, `save_tanshin_pdf()` |
 | `stock_fetcher.py` | yfinance株価取得＋証券コード検証＋永続キャッシュ | `fetch_stock_info()`, `validate_stock_code()` |
-| `financial_calc.py` | LTM・EBITDA・EV・マルチプル計算 | `build_company_data()` |
+| `financial_calc.py` | LTM・EBITDA・EV・マルチプル計算（Calendarize対応） | `build_company_data()`, `determine_calendarize_pattern()`, `calc_ltm_calendarized()` |
 | `comps_generator.py` | Excel Comps表生成（openpyxl） | `generate_comps(config, path)` |
 | `supabase_client.py` | Supabase DB/Storage ラッパー（全データの永続化） | `load_edinet_data()`, `load_stock_data()`, `load_forecasts()` |
 | `auth.py` | Supabase GoTrue認証（オプション・無効化済み） | — |
@@ -52,7 +52,7 @@ streamlit run app.py
 | `edinet_meta` | EDINET書類メタデータ | `doc_id` |
 | `financials` | パース済み財務データ（raw_data JSONBに全項目保持） | `(code, doc_type, period_end)` |
 | `stock_data` | 株価データ（日次） | `(code, fetched_date)` |
-| `tanshin_forecasts` | 業績予想（**決算期×四半期ごとに履歴保持**） | `(code, fy_month, period_type)` |
+| `tanshin_forecasts` | 業績予想＋経営成績実績（**決算期×四半期ごとに履歴保持、Calendarize LTM用**） | `(code, fy_month, period_type)` |
 
 ### Storage
 - **バケット**: `tanshin-pdfs`（Private）
@@ -120,8 +120,21 @@ Step 0の検証で以下のいずれかがあればyfinance検証をスキップ
 - **IFRS自己資本比率**: `EquityToAssetRatioIFRSSummaryOfBusinessResults`は実際には「1株当たり親会社所有者帰属持分」を返すため除外。J-GAAP版のみ使用
 - **のれん償却費D&A**: `DepreciationAndAmortizationOfGoodwillOpeCF`をマッピング（2702マクドナルドで確認）
 
-### LTM計算（Calendarize対応済み）
-`edinet_client.py` の `extract_financial_data(include_prior=True)` で半期報告書CSVから前期H1データ（`相対年度=前中間期/前中間期末` or `前年度同四半期累計期間/前年度同四半期会計期間末`）を抽出。`financial_calc.py` の `build_company_data()` で **正確なLTM = FY通期 − 前期H1 + 今期H1** を自動計算。前期H1が取れない場合は通期値にフォールバック。
+### LTM計算（Calendarize 6パターン対応）
+`financial_calc.py` の `determine_calendarize_pattern(fy_end_month)` で45/90日ルールに基づき最適なLTMパターンを自動判定。`calc_ltm_calendarized()` でパターンに応じたLTM計算を実行。データ不足時はフォールバックチェーン（Q4→Q3→Q2→Q1→FY_TANSHIN→yuho_FY）で降格。
+
+| パターン | データソース | LTM計算 |
+|---------|------------|---------|
+| Q4_PREV | なし（FY end後0-45日） | yuho_FY そのまま |
+| FY_TANSHIN | 通期決算短信 | tanshin_FY実績 |
+| Q1 | 有報（FY end後90日〜） | yuho_FY そのまま |
+| Q2 | Q1決算短信 | `yuho_FY - Q1_prior + Q1_current` |
+| Q3 | 半期報告書 | `yuho_FY - H1_prior + H1_current`（従来ロジック） |
+| Q4 | Q3決算短信 | `yuho_FY - Q3_prior + Q3_current` |
+
+**D&Aの扱い**: 決算短信にD&Aが載らないため、D&A LTMは常にyuho/hankiベース。Q2/Q4パターンではyuho_FYの値をそのまま使用。
+**前年同期は決算短信PDFから取得**: `parse_tanshin_actuals()` で当期・前年同期の両方を抽出。別途前年の決算短信は不要。
+**後方互換**: `tanshin_actuals=None` の場合は従来のH1ベースLTMにフォールバック。
 
 ### 有利子負債の計算
 `calc_total_debt()` — 以下の項目を合算:
@@ -134,8 +147,14 @@ IFRS企業の`BondsAndBorrowings`（借入金＋社債合算）は`short_term_de
 ### 配当利回りの計算
 **有報記載の直近終了フル年度の実績配当額** ÷ 現在株価。今期の予想配当額ではなく実績値を使用。DPSは`edinet_client.py`の`SUMMARY_ELEMENT_MAP`から自動取得（`jpcrp_cor:DividendPaidPerShareSummaryOfBusinessResults`）。
 
-### 決算短信パーサー（3段階フォールバック）
-`tanshin_parser.py` — PyMuPDF（`fitz`）で決算短信PDFからテキスト抽出し、正規表現で業績予想（売上高・営業利益・純利益）をパース。
+### 決算短信経営成績パーサー（Calendarize LTM用）
+`parse_tanshin_actuals(pdf_bytes)` — 決算短信1ページ目の「経営成績（累計）」セクションから当期・前年同期の実績値（売上高・営業利益・純利益）を抽出。IFRS企業の列構造（7列: 売上収益〜包括利益）にも対応し、営業利益と親会社帰属純利益を正しい列インデックスで取得。
+- **J-GAAP**: 4列構造（売上高, 営業利益, 経常利益, 純利益）→ op=col[1], ni=col[3]
+- **IFRS（事業利益あり）**: 7列構造 → op=col[2]（営業利益）, ni=col[5]（親会社帰属）
+- **IFRS（事業利益なし）**: 6列構造 → op=col[1], ni=col[4]
+
+### 決算短信業績予想パーサー（3段階フォールバック）
+`parse_tanshin_pdf(pdf_bytes)` — PyMuPDF（`fitz`）で決算短信PDFからテキスト抽出し、正規表現で業績予想（売上高・営業利益・純利益）をパース。
 
 1. **メインパーサー** (`_extract_forecast`): 「業績予想」セクションヘッダーを検出 → 「通期」行から整数値を抽出（小数=増減率/EPSをスキップ）。同一行・複数行（PyMuPDFのセル別抽出）両対応。
 2. **通期フォールバック** (`_extract_tsuuki_fallback`): セクションヘッダーがPyMuPDFで抽出できない場合、テキスト全体から「通期」行を探し後続行の整数値を収集。
@@ -267,6 +286,7 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supaba
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
+| 2026/2/28 | — | Calendarize LTM: 6パターン対応（Q4_PREV/FY_TANSHIN/Q1/Q2/Q3/Q4）、parse_tanshin_actuals()追加、tanshin_forecasts実績カラム拡張 |
 | 2026/2/28 | e51cf3b | EBITDA予想をDB予想値+D&A実績から事前計算して復元 |
 | 2026/2/28 | 0408912 | 再生成時にtanshin_forecastsをDBから再読込（予想値消失防止） |
 | 2026/2/28 | 145b698 | tanshin_forecastsをpopではなく空dictで初期化（AttributeError修正） |

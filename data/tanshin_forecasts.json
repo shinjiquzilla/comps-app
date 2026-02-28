@@ -2,51 +2,155 @@
   "6999": {
     "rev_forecast": 71400,
     "op_forecast": 3710,
-    "ni_forecast": 3410
+    "ni_forecast": 3410,
+    "fy_month": "unknown",
+    "period_type": "unknown"
   },
   "6616": {
     "rev_forecast": 25000,
     "op_forecast": 800,
-    "ni_forecast": 550
+    "ni_forecast": 550,
+    "fy_month": "unknown",
+    "period_type": "unknown"
   },
   "6963": {
     "rev_forecast": 480000,
     "op_forecast": 6000,
-    "ni_forecast": 10000
+    "ni_forecast": 10000,
+    "fy_month": "unknown",
+    "period_type": "unknown"
   },
   "6962": {
     "rev_forecast": 40000,
     "op_forecast": 1000,
-    "ni_forecast": 300
+    "ni_forecast": 300,
+    "fy_month": "2026-03",
+    "period_type": "Q3"
   },
   "7550": {
     "rev_forecast": 1223500,
     "op_forecast": 82000,
-    "ni_forecast": 42500
+    "ni_forecast": 42500,
+    "fy_month": "2026-03",
+    "period_type": "Q3"
   },
   "2702": {
     "rev_forecast": 405500,
     "op_forecast": 54500,
-    "ni_forecast": 34500
+    "ni_forecast": 34500,
+    "fy_month": "2025-12",
+    "period_type": "FY"
   },
   "3197": {
     "rev_forecast": 490000,
     "op_forecast": 36000,
-    "ni_forecast": 29700
+    "ni_forecast": 29700,
+    "fy_month": "2025-12",
+    "period_type": "FY"
   },
   "6626": {
     "rev_forecast": 23382,
     "op_forecast": 3000,
-    "ni_forecast": 2240
+    "ni_forecast": 2240,
+    "fy_month": "2026-03",
+    "period_type": "Q3"
   },
   "6770": {
     "rev_forecast": 1010000,
     "op_forecast": 37000,
-    "ni_forecast": 21000
+    "ni_forecast": 21000,
+    "fy_month": "2026-03",
+    "period_type": "Q3"
   },
   "7280": {
     "rev_forecast": 340000,
     "op_forecast": 20000,
-    "ni_forecast": 9000
+    "ni_forecast": 9000,
+    "fy_month": "2026-03",
+    "period_type": "Q3"
+  },
+  "6768": {
+    "rev_forecast": 120000,
+    "op_forecast": 5000,
+    "ni_forecast": 600,
+    "fy_month": "unknown",
+    "period_type": "unknown"
+  },
+  "8053": {
+    "rev_forecast": 7350000,
+    "op_forecast": 400000,
+    "ni_forecast": 570000,
+    "fy_month": "unknown",
+    "period_type": "manual"
+  },
+  "8058": {
+    "rev_forecast": 17500000,
+    "op_forecast": 550000,
+    "ni_forecast": 700000,
+    "fy_month": "unknown",
+    "period_type": "manual"
+  },
+  "9376": {
+    "rev_forecast": 5150,
+    "op_forecast": 141,
+    "ni_forecast": 115,
+    "fy_month": "2026-09",
+    "period_type": "Q1"
+  },
+  "241A": {
+    "rev_forecast": 5000,
+    "op_forecast": 45,
+    "ni_forecast": 1,
+    "fy_month": "2026-09",
+    "period_type": "Q1"
+  },
+  "9414": {
+    "rev_forecast": 12576,
+    "op_forecast": 1804,
+    "ni_forecast": 1306,
+    "fy_month": "2026-08",
+    "period_type": "Q1"
+  },
+  "8057": {
+    "rev_forecast": 418000,
+    "op_forecast": 15400,
+    "ni_forecast": 10800,
+    "fy_month": "2026-07",
+    "period_type": "Q1"
+  },
+  "9278": {
+    "rev_forecast": 127000,
+    "op_forecast": 3800,
+    "ni_forecast": 2200,
+    "fy_month": "2026-05",
+    "period_type": "Q2"
+  },
+  "6763": {
+    "rev_forecast": 17000,
+    "op_forecast": 1300,
+    "ni_forecast": 1400,
+    "fy_month": "2026-03",
+    "period_type": "Q3"
+  },
+  "9436": {
+    "rev_forecast": 1,
+    "op_forecast": 2026,
+    "ni_forecast": 3,
+    "fy_month": "2026-03",
+    "period_type": "Q3"
+  },
+  "8233": {
+    "rev_forecast": 1015000,
+    "op_forecast": 491400,
+    "ni_forecast": 57000,
+    "fy_month": "2026-02",
+    "period_type": "Q3"
+  },
+  "9369": {
+    "rev_forecast": 205000,
+    "op_forecast": 5700,
+    "ni_forecast": 2100,
+    "fy_month": "2025-11",
+    "period_type": "FY"
   }
 }
