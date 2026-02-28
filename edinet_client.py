@@ -454,6 +454,18 @@ def extract_financial_data(zip_bytes, include_prior=False):
     prior_result = {}
     _unmatched_debug = []
 
+    # 連結財務諸表がCSV内に存在するか事前チェック（個別のみの企業対応）
+    _has_consolidated = False
+    for _chk_line in lines[1:]:
+        _chk_parts = _chk_line.split('\t')
+        if len(_chk_parts) >= 5:
+            _chk_con = _chk_parts[4].strip().strip('"').strip()
+            if _chk_con == '連結':
+                _has_consolidated = True
+                break
+    # 連結がない場合は個別もフォールバックで受け入れ
+    _accepted_consolidated = ('連結', 'その他') if _has_consolidated else ('連結', 'その他', '個別')
+
     # 当期（有報: 当期/当期末、半期報: 当中間期/当中間期末、四半期報: 当四半期累計期間/当四半期会計期間末）
     current_periods = ('当期', '当期末', '当中間期', '当中間期末',
                        '当四半期累計期間', '当四半期会計期間末')
@@ -486,8 +498,8 @@ def extract_financial_data(zip_bytes, include_prior=False):
         is_prior = include_prior and relative_year in prior_periods
         if not is_current and not is_prior:
             continue
-        # 連結 or その他（IFRS企業は「その他」）を受け入れ。個別は除外。
-        if consolidated not in ('連結', 'その他'):
+        # 連結 or その他（IFRS企業は「その他」）を受け入れ。個別のみ企業はフォールバック。
+        if consolidated not in _accepted_consolidated:
             continue
 
         # 要素IDでマッチング（完全一致 + IFRS接尾辞付きの動的マッチ）
