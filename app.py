@@ -32,12 +32,13 @@ from edinet_client import fetch_company_financials, fetch_companies_batch, load_
 from stock_fetcher import fetch_stock_info, validate_stock_code, _load_stock_cache
 from financial_calc import build_company_data
 from comps_generator import generate_comps
-from tanshin_parser import parse_tanshin_pdf, save_tanshin_pdf, identify_tanshin_pdf
+from tanshin_parser import parse_tanshin_pdf, parse_tanshin_actuals, save_tanshin_pdf, identify_tanshin_pdf
 
 # Supabase client (optional)
 try:
     from supabase_client import (
         get_supabase, load_forecasts, save_all_forecasts, save_forecast,
+        load_tanshin_actuals as sb_load_tanshin_actuals,
         upload_tanshin_pdf as sb_upload_tanshin_pdf,
         load_edinet_data as sb_load_edinet_data,
         save_edinet_data as sb_save_edinet_data,
@@ -55,6 +56,40 @@ import json as _json
 from pathlib import Path as _Path
 
 _FORECASTS_FILE = _Path(__file__).parent / "data" / "tanshin_forecasts.json"
+_TANSHIN_DATA_BASE = _Path(__file__).parent / "data" / "tanshin"
+
+
+def _load_tanshin_actuals_for_code(code):
+    """
+    ローカルPDF → Supabase の順で決算短信実績値を読み込む。
+    Returns: dict keyed by period_type, e.g. {'Q3': {...}, 'FY': {...}}
+    """
+    result = {}
+
+    # 1. ローカルPDFからパース
+    code_dir = _TANSHIN_DATA_BASE / code
+    if code_dir.is_dir():
+        for pdf_path in sorted(code_dir.glob("tanshin_*.pdf"), reverse=True):
+            parts = pdf_path.stem.split('_')
+            if len(parts) >= 3:
+                period_type = parts[2]  # FY, Q1, Q2, Q3
+                if period_type not in result:
+                    try:
+                        actuals = parse_tanshin_actuals(pdf_path.read_bytes())
+                        if actuals and actuals.get('rev_actual') is not None:
+                            actuals['fy_month'] = parts[1]
+                            result[period_type] = actuals
+                    except Exception:
+                        pass
+
+    # 2. Supabase フォールバック
+    if not result and _HAS_SUPABASE:
+        try:
+            result = sb_load_tanshin_actuals(code)
+        except Exception:
+            pass
+
+    return result
 
 
 def _load_forecasts_cache():
@@ -507,8 +542,12 @@ if generate_btn:
                 }
                 result['edinet_raw'] = edinet_data if edinet_data.get('yuho_data') or edinet_data.get('hanki_data') else None
 
+                # Calendarize: 決算短信実績値を読み込み
+                _ta = _load_tanshin_actuals_for_code(code)
+
                 try:
-                    company = build_company_data(code, edinet_data, tdnet_data, stock_data)
+                    company = build_company_data(code, edinet_data, tdnet_data, stock_data,
+                                                tanshin_actuals=_ta if _ta else None)
                     if not company.get('name') and stock_data.get('company_name_en'):
                         company['name'] = stock_data['company_name_en']
                     result['data'] = company
@@ -662,8 +701,11 @@ if generate_btn:
                     result['errors'].append(f"株価: {e}")
 
                 progress_text.text(f"  ⟐ {code}: 計算中...")
+                # Calendarize: 決算短信実績値を読み込み
+                _ta = _load_tanshin_actuals_for_code(code)
                 try:
-                    company = build_company_data(code, edinet_data, tdnet_data, stock_data)
+                    company = build_company_data(code, edinet_data, tdnet_data, stock_data,
+                                                tanshin_actuals=_ta if _ta else None)
                     if not company.get('name') and stock_data.get('company_name_en'):
                         company['name'] = stock_data['company_name_en']
                     result['data'] = company
@@ -716,7 +758,13 @@ if st.session_state.generation_done:
         with st.expander("● デバッグ: 取得データ詳細", expanded=False):
             for r in st.session_state.company_data:
                 code = r.get('code', '?')
-                st.markdown(f"**{code}** (status: {r.get('status', '?')})")
+                _cal_info = ""
+                if r.get('data'):
+                    _ce = r['data'].get('_calendarize_expected', '')
+                    _cu = r['data'].get('_calendarize_used', '')
+                    if _ce or _cu:
+                        _cal_info = f" | LTM: {_cu}" + (f" (期待: {_ce})" if _ce != _cu else "")
+                st.markdown(f"**{code}** (status: {r.get('status', '?')}{_cal_info})")
                 if r.get('edinet_raw'):
                     ed = r['edinet_raw']
                     st.json({
@@ -1103,12 +1151,17 @@ render();
                     code = ident['code_4']
                     if code and code in candidate_codes:
                         parsed = parse_tanshin_pdf(ir['pdf_bytes'])
+                        # 経営成績実績値もパース（Calendarize LTM用）
+                        actuals = parse_tanshin_actuals(ir['pdf_bytes'])
                         if parsed:
                             # 期間情報を追加（identify_tanshin_pdfの判定結果から）
                             if ident.get('fy_end'):
                                 parsed['fy_month'] = ident['fy_end']
                             if ident.get('period_type'):
                                 parsed['period_type'] = ident['period_type']
+                            # 実績値をforecastデータにマージ（save_forecast経由でDBに保存）
+                            if actuals:
+                                parsed.update(actuals)
                             st.session_state.tanshin_forecasts[code] = parsed
                             _parsed_count += 1
                         else:
@@ -1169,52 +1222,51 @@ render();
                 tanshin = st.session_state.get('tanshin_forecasts', {}).get(code, {})
                 ni_forecast = tanshin.get('ni_forecast') or comp.get('ni_forecast')
 
-                # 決算期を特定: EDINETの半期報periodEndから決算月を取得
+                # 決算期を特定 & Calendarizeパターンから必要な決算短信を推定
                 _fy_label = ""
-                _fy_end_month = None  # 決算月（1-12）
-                _fy_end_year = None
+                _fy_end_month = None
                 for r in st.session_state.company_data:
                     if r.get('code') == code and r.get('edinet_raw'):
                         hd = r['edinet_raw'].get('hanki_doc')
-                        if hd and hd.get('periodEnd'):
-                            pe = hd['periodEnd']
-                            pe_clean = pe.replace('/', '-')
-                            parts = pe_clean.split('-')
-                            if len(parts) >= 2:
-                                _fy_end_year = int(parts[0])
-                                _fy_end_month = int(parts[1])
-                                _fy_label = f"{parts[0]}年{_fy_end_month}月期"
+                        yd = r['edinet_raw'].get('yuho_doc')
+                        for _d in [yd, hd]:
+                            if _d and _d.get('periodEnd'):
+                                pe_clean = _d['periodEnd'].replace('/', '-')
+                                parts = pe_clean.split('-')
+                                if len(parts) >= 2:
+                                    _m = int(parts[1])
+                                    if _d is yd:
+                                        _fy_end_month = _m
+                                    else:
+                                        _fy_end_month = ((_m - 1 + 6) % 12) + 1
+                                    break
                         break
 
-                # 最新の決算短信を推定（決算月と現在日付から）
-                # 年度末から3ヶ月以内なら通期決算短信を要求
+                # Calendarizeパターンに基づく不足決算短信の推定
                 _quarter_hint = ""
                 if _fy_end_month is not None:
-                    today = datetime.today()
-                    # 直近の年度末日を算出
-                    fy_end_year = today.year if today.month > _fy_end_month else today.year - 1
-                    if today.month == _fy_end_month and today.day <= 28:
-                        fy_end_year = today.year - 1
-                    from datetime import date
+                    from financial_calc import determine_calendarize_pattern
+                    from datetime import date as _date
                     import calendar
-                    _last_day = calendar.monthrange(fy_end_year, _fy_end_month)[1]
-                    fy_end_date = date(fy_end_year, _fy_end_month, _last_day)
-                    days_since_fy_end = (today.date() - fy_end_date).days
-
-                    if 0 <= days_since_fy_end <= 92:
-                        # 年度末から約3ヶ月以内 → 通期決算短信を要求
-                        _quarter_hint = "通期"
-                        _fy_label = f"{fy_end_year}年{_fy_end_month}月期"
+                    _cal_pattern = determine_calendarize_pattern(_fy_end_month)
+                    _pattern_to_hint = {
+                        'Q4_PREV': '通期',
+                        'FY_TANSHIN': '通期',
+                        'Q1': '第1四半期',
+                        'Q2': '第1四半期',
+                        'Q3': '第2四半期',
+                        'Q4': '第3四半期',
+                    }
+                    _quarter_hint = _pattern_to_hint.get(_cal_pattern, '最新の')
+                    # 決算期ラベル
+                    _today = _date.today()
+                    _fy_year = _today.year if _today.month > _fy_end_month else _today.year - 1
+                    if _today.month == _fy_end_month:
+                        _fy_year = _today.year - 1
+                    if _quarter_hint == '通期':
+                        _fy_label = f"{_fy_year}年{_fy_end_month}月期"
                     else:
-                        # 年度末から3ヶ月超 → 経過月数から四半期を推定
-                        months_since = (today.year - fy_end_year) * 12 + (today.month - _fy_end_month)
-                        if months_since <= 6:
-                            _quarter_hint = "第1四半期"
-                        elif months_since <= 9:
-                            _quarter_hint = "第2四半期"
-                        else:
-                            _quarter_hint = "第3四半期"
-                        _fy_label = f"{fy_end_year + 1}年{_fy_end_month}月期"
+                        _fy_label = f"{_fy_year + 1}年{_fy_end_month}月期"
 
                 suggestion = _fy_label
                 if _quarter_hint:
