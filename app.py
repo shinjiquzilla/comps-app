@@ -353,10 +353,10 @@ if generate_btn:
         st.session_state.company_data = []
         st.session_state.errors = []
         st.session_state.generation_done = False
-        # 前回のフォーム入力値・EBITDA計算値・決算短信予想値をクリア
+        # 前回のフォーム入力値・EBITDA計算値をクリア（予想値はDBから再読込）
         st.session_state.pop('_ebitda_calc', None)
         st.session_state.pop('_ebitda_approx', None)
-        st.session_state.tanshin_forecasts = {}
+        st.session_state.tanshin_forecasts = _load_forecasts_cache()
         for _k in list(st.session_state.keys()):
             if any(_k.startswith(p) for p in (
                 'name_', 'acc_', 'fy_', 'price_', 'shares_',
