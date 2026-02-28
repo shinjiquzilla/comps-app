@@ -78,6 +78,16 @@ streamlit run app.py
 EDINET取得・株価取得・決算短信アップロード時に**ローカル + Supabase の両方に自動保存**。
 git commit & pushによるデータ永続化は不要。
 
+### 既知の問題: Supabase保存の無言失敗
+`save_financials()` 等のSupabase保存関数はすべて `except Exception: pass` で例外を握りつぶす。
+初回のSupabase移行時、ローカルキャッシュには全データがあったが `financials` テーブルが空のままだった（保存が無言で失敗していた）。
+2026/2/28にローカルキャッシュから手動で全11社のデータを一括投入して解決。
+
+**注意点:**
+- `hanki_parsed.json` はネスト形式（`{current: {}, prior: {}}`）だが、Supabase保存時は `current` / `prior` を分離して `hanki_current` / `hanki_prior` として別レコードに保存する必要がある
+- `save_edinet_data()` に `yuho_doc` / `hanki_doc` を渡さないと `period_end` が `date.today()` になる
+- 新しい企業をローカルで追加した場合、Supabaseにも保存されているか確認すること
+
 ### 新しい企業を追加する手順
 1. アプリで証券コードを入力して生成 → EDINET/yfinanceから自動取得
 2. 決算短信PDFをアップロード → 自動パース
