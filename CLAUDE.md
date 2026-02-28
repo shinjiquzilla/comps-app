@@ -1,7 +1,7 @@
 # CLAUDE.md - comps_app
 
 ## 概要
-Streamlit製 Comps（比較会社分析）自動生成ツール。証券コード入力でEDINET/yfinanceからデータ取得し、Comps表Excelを出力する。
+Streamlit製 Comps（比較会社分析）自動生成ツール。証券コード入力でJ-Quants API/EDINETからデータ取得し、Comps表Excelを出力する。
 
 ## 起動
 ```bash
@@ -17,7 +17,7 @@ streamlit run app.py
 | `edinet_client.py` | EDINET API type=5 CSV取得・パース | `fetch_companies_batch()` |
 | `tdnet_client.py` | TDnetスクレイピング+PyMuPDF PDF解析（**無効化済み**） | — |
 | `tanshin_parser.py` | 決算短信PDFパーサー（業績予想自動抽出＋経営成績実績抽出＋一括判定） | `parse_tanshin_pdf()`, `parse_tanshin_actuals()`, `identify_tanshin_pdf()`, `save_tanshin_pdf()` |
-| `stock_fetcher.py` | yfinance株価取得＋証券コード検証＋永続キャッシュ | `fetch_stock_info()`, `validate_stock_code()` |
+| `stock_fetcher.py` | J-Quants API株価取得＋証券コード検証＋永続キャッシュ（yfinanceフォールバック） | `fetch_stock_info()`, `validate_stock_code()` |
 | `financial_calc.py` | LTM・EBITDA・EV・マルチプル計算（Calendarize対応） | `build_company_data()`, `determine_calendarize_pattern()`, `calc_ltm_calendarized()` |
 | `comps_generator.py` | Excel Comps表生成（openpyxl） | `generate_comps(config, path)` |
 | `supabase_client.py` | Supabase DB/Storage ラッパー（全データの永続化） | `load_edinet_data()`, `load_stock_data()`, `load_forecasts()` |
@@ -27,15 +27,43 @@ streamlit run app.py
 
 ## データフロー
 ```
-証券コード → edinet_client (有報・半期報) → financial_calc (LTM計算)
-           → stock_fetcher (株価)          → build_company_data() → app.py 表示
-                                                                  → comps_generator (Excel出力)
+証券コード → J-Quants API (株価・P&L・予想・株式数)  → financial_calc → app.py 表示
+           → EDINET有報 (BS: 現金・負債・D&A)         → build_company_data()
+                                                                      → comps_generator (Excel出力)
 ```
+
+## データソース設計思想（2026/2/28〜）
+**J-Quantsで取れるものは全部J-Quantsから取る。EDINETはJ-Quantsで取れない項目だけパースで補完。**
+
+### J-Quants API (`/v2/fins/summary`, Lightプラン月1,650円)
+| 項目 | フィールド | 用途 |
+|------|-----------|------|
+| 株価（前日終値） | `AdjC` via `/v2/equities/bars/daily` | 時価総額・マルチプル |
+| 売上高・営業利益・純利益（累計） | `Sales`, `OP`, `NP` | LTM計算（全四半期分あり） |
+| 通期業績予想 | `FSales`, `FOP`, `FNP`, `FEPS` | Forward PER・EV/EBITDA予想 |
+| 配当予想（年間） | `FDivAnn` | 配当利回り |
+| 発行済株式数・自己株式数 | `ShOutFY`, `TrShFY` | 時価総額・流通株数 |
+| 純資産・自己資本比率 | `Eq`, `EqAR` | PBR |
+| 総資産 | `TA` | 参考 |
+
+### EDINET有報（J-Quantsで取れない項目のみ）
+| 項目 | 用途 |
+|------|------|
+| 現金及び預金 | EV計算 |
+| 有利子負債（短期/長期/社債/リース） | EV計算 |
+| 減価償却費 | EBITDA計算 |
+| 投資有価証券 | 参考（ネットキャッシュ） |
+
+### IFRS総合商社の制約（8058三菱商事、8053住友商事等）
+J-Quantsでも`OP`=None、`FSales`=None、`FOP`=None。IAS 1ではP/Lの「営業利益」表示が任意のため、商社は決算短信にも有報にも連結営業利益を載せない。`FNP`（純利益予想）のみ取得可能。営業利益・EBITDA は手動補完フォームで入力。
+
+### 数値精度
+J-Quantsは百万円単位（決算短信記載値）、EDINETは円単位。差分は百万円未満の端数のみ（例: J-Quants 16,790 vs EDINET 16,790.04）。実質同一。
 
 ## 数値単位の規約
 - **内部データ**: 金額は全て**百万円**、株数は**千株**、株価・DPSは**円**
+- **J-Quants API**: 金額は円単位 → 百万円に変換、株数は株単位 → 千株に変換
 - **EDINET CSV**: 元データは円単位 → `edinet_client.py`で百万円に変換
-- **yfinance**: marketCapは円 → `stock_fetcher.py`で百万円に変換
 
 ## データ永続化: Supabase + ローカルキャッシュ
 
@@ -176,13 +204,13 @@ IFRS企業の`BondsAndBorrowings`（借入金＋社債合算）は`short_term_de
 - Forward PERは決算短信の`ni_forecast`から動的再計算（決算短信パース処理をテーブル構築より先に実行することで即反映）
 
 ### 証券コード検証
-`validate_stock_code(code_4)` — yfinance `history(period="5d")` で東証に存在するか軽量チェック。ローカルにキャッシュ（EDINET/株価/tanshin）がある企業はyfinance不要。Supabase `companies`テーブルに存在する企業もスキップ。フォーマット検証（4桁英数字、2024年1月〜アルファベット対応: 241A等）は入力欄の下にリアルタイム表示。
+`validate_stock_code(code_4)` — キャッシュ → J-Quants API → yfinance の順で東証に存在するか軽量チェック。ローカルにキャッシュ（EDINET/株価/tanshin）がある企業は外部API不要。Supabase `companies`テーブルに存在する企業もスキップ。フォーマット検証（4桁英数字、2024年1月〜アルファベット対応: 241A等）は入力欄の下にリアルタイム表示。
 
 ### 手動補完UI
 - `st.form("manual_edit_form_{codes_hash}")`でラップ（企業セットごとにフォームキーを分離、入力ごとの再実行を防止）
 - widgetキーは企業コードベース（`name_6763`等）。インデックスベースだと異なる企業セット間でキーが衝突し古い値が残留する
 - 「データを反映」ボタン押下時に `st.toast` + `st.spinner` で処理中フィードバック表示
-- 株価・発行済株式数を手入力可能（yfinanceレート制限時の対応）
+- 株価・発行済株式数を手入力可能（API障害時の対応）
 - 予想値（進行期末）: 売上高予想・営業利益予想・純利益予想・減価償却費予想・EBITDA予想を入力可能
 - **再生成時のデータ保持**: tanshin_forecastsはDBから再読込（`_load_forecasts_cache()`）、EBITDA予想はop_forecast+da_ltmから事前計算して復元。session stateのみに保存されるデータ（`_ebitda_calc`）はセッション切れで消失するため、表示前に毎回再計算
 - **EBITDA予想の計算ロジック**:
@@ -211,7 +239,15 @@ IFRS企業の`BondsAndBorrowings`（借入金＋社債合算）は`short_term_de
 `financial_calc.py`の`build_company_data()`でEDINETの`periodEnd`から決算月を動的に取得。有報のperiodEndが年度末、半期報のperiodEndは中間期末（+6ヶ月が年度末）。ハードコード`'Mar'`ではなく企業ごとに正しい決算月を設定。
 
 ### SSL検証バイパス
-社内ネットワーク対応のため、`CURL_CA_BUNDLE=''` と `REQUESTS_CA_BUNDLE=''` を設定。`stock_fetcher.py`と`app.py`の両方で設定。
+社内ネットワーク対応のため、`CURL_CA_BUNDLE=''` と `REQUESTS_CA_BUNDLE=''` を設定。`stock_fetcher.py`と`app.py`の両方で設定。yfinanceフォールバック時に使用。
+
+### J-Quants API設定
+- **プラン**: Light（月1,650円）
+- **APIキー**: `.streamlit/secrets.toml` の `[jquants]` セクション → Supabase `app_config` フォールバック
+- **株価**: `/v2/equities/bars/daily` — 銘柄コード5桁（4桁+"0"）、`AdjC`（調整済み終値）
+- **財務サマリー**: `/v2/fins/summary` — 決算短信ベースのP&L・予想・株式数
+- **銘柄情報**: `/v2/listed/info` — Lightプランでは403（利用不可）
+- **yfinanceフォールバック**: J-Quants失敗時のみ遅延import。`import yfinance as yf` はトップレベルから削除済み
 
 ### 認証（現在無効）
 `auth.py`はリポジトリに残っているが、`app.py`からのimport・呼び出しは削除済み（2026/2/26）。`gotrue`もrequirements.txtから除外。再度有効にする場合は`auth.py`のimportとAuth Gateを`app.py`に戻す。
@@ -224,7 +260,7 @@ python comps_generator.py config.json output.xlsx
 config形式は`comps_generator.py`冒頭のdocstringを参照。
 
 ## 依存ライブラリ
-streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supabase
+streamlit, yfinance（フォールバック専用）, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supabase
 
 ## キャッシュ済み対象企業
 
@@ -280,12 +316,13 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supaba
 - **デフォルト検索期間400日**: 有報は決算後3ヶ月（3月決算→6月提出）、半期報も同様
 - **sys.stdout書き換え禁止**: モジュールのトップレベルで`sys.stdout`を書き換えるとStreamlitのIO破壊でクラッシュ。`if __name__ == '__main__':`ガード必須
 - **未使用.pyでもimportに注意**: Streamlit Cloudは全.pyを走査する場合がある。使わないモジュールでもimportエラーがあるとクラッシュ（auth.pyのgotrueで発生→try/except化）
-- **yfinanceレート制限**: 複数銘柄連続取得でToo Many Requests。各社間に3秒ディレイ＋リトライ（5/10/15秒バックオフ）で対応済み。キャッシュヒット時は待機なし
+- **株価取得**: J-Quants APIがメイン。yfinanceはフォールバック専用（レート制限あり: 3秒ディレイ＋リトライ）。キャッシュヒット時は待機なし
 - **NumberColumnのformat非対応**: Streamlit Cloud上ではNumberColumnのformat文字列（`%,.0f`等）が効かない場合がある。サマリーテーブルはJavaScript付きHTMLテーブル（`st.components.v1.html`）で回避済み。
 
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
+| 2026/2/28 | 2d056cb | J-Quants API対応: 株価取得をyfinanceからJ-Quants APIに切り替え、発行済株式数をEDINET算出に変更 |
 | 2026/2/28 | bf029d7 | タイトル行右端にくじらキャピタルロゴ（横型PNG、base64埋め込み）を配置 |
 | 2026/2/28 | a7f2f37 | 手動補完フォーム: 全数値入力に桁区切りカンマ表示、予想値ラベルに（百万円）追記、説明文追加 |
 | 2026/2/28 | 7bde0a9〜028c423 | Calendarize LTM: 6パターン対応（Q4_PREV/FY_TANSHIN/Q1/Q2/Q3/Q4）、parse_tanshin_actuals()追加、tanshin_forecasts実績カラム拡張 |
@@ -349,7 +386,7 @@ streamlit, yfinance, openpyxl, pymupdf, requests, beautifulsoup4, pandas, supaba
 - TDnet機能は無効化済み（有料サービス）。業績予想は決算短信PDFアップロード or 手動入力で対応
 - 決算短信パーサーは東証規定フォーマットを前提。企業ごとの微差でパース失敗する場合あり → 3段階フォールバックで対応
 - EDINET APIは1日1リクエスト/秒のレート制限あり（`time.sleep(1)`で対応済み）
-- yfinanceレート制限は完全には回避できない→永続キャッシュ＋手動株価入力で代替可能
+- yfinanceはJ-Quantsのフォールバック専用。レート制限は永続キャッシュ＋手動株価入力で代替可能
 - Streamlit CloudのNumberColumn formatが効かない→JS付きHTMLテーブルで回避済み
 - IFRS企業のリース負債（`OtherFinancialLiabilities`）は`BondsAndBorrowings`と分離されている場合があり、現状はBondsAndBorrowingsのみ計上。すかいらーく等のIFRS16リース負債は含まれていない可能性がある
 - 2702（マクドナルド）・3197（すかいらーく）は12月決算。Forward PER用の決算短信（Q3）が未アップロード
