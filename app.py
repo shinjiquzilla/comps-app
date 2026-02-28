@@ -356,7 +356,7 @@ if generate_btn:
         # 前回のフォーム入力値・EBITDA計算値・決算短信予想値をクリア
         st.session_state.pop('_ebitda_calc', None)
         st.session_state.pop('_ebitda_approx', None)
-        st.session_state.pop('tanshin_forecasts', None)
+        st.session_state.tanshin_forecasts = {}
         for _k in list(st.session_state.keys()):
             if any(_k.startswith(p) for p in (
                 'name_', 'acc_', 'fy_', 'price_', 'shares_',
