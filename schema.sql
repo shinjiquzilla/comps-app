@@ -70,17 +70,25 @@ CREATE TABLE IF NOT EXISTS stock_data (
   UNIQUE(code, fetched_date)
 );
 
--- 5. tanshin_forecasts — 決算短信業績予想（履歴保持）
+-- 5. tanshin_forecasts — 決算短信業績予想＋経営成績実績（履歴保持）
 -- 同一企業でも決算期(fy_month)×四半期(period_type)ごとに別レコード
 -- 例: 6763, 2027-03, Q1 = 2027年3月期Q1時点の通期予想
 --     6763, 2027-03, Q2 = 2027年3月期Q2時点の通期予想（修正あれば異なる値）
 --     6763, 2028-03, Q1 = 翌年度のQ1時点予想
+-- 1つの決算短信PDFから予想値と経営成績（累計）実績値の両方を同一レコードに保存
 CREATE TABLE IF NOT EXISTS tanshin_forecasts (
   id SERIAL PRIMARY KEY,
   code TEXT REFERENCES companies(code),
   rev_forecast NUMERIC,
   op_forecast NUMERIC,
   ni_forecast NUMERIC,
+  -- 経営成績（累計）実績値: Calendarize LTM計算用
+  rev_actual NUMERIC,            -- 当期累計 売上高
+  op_actual NUMERIC,             -- 当期累計 営業利益
+  ni_actual NUMERIC,             -- 当期累計 純利益
+  rev_prior NUMERIC,             -- 前年同期累計 売上高
+  op_prior NUMERIC,              -- 前年同期累計 営業利益
+  ni_prior NUMERIC,              -- 前年同期累計 純利益
   period_type TEXT NOT NULL,      -- 'FY' / 'Q1' / 'Q2' / 'Q3'
   fy_month TEXT NOT NULL,         -- '2027-03' (予想対象の決算期)
   pdf_storage_path TEXT,
@@ -88,6 +96,17 @@ CREATE TABLE IF NOT EXISTS tanshin_forecasts (
   updated_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(code, fy_month, period_type)
 );
+
+-- ALTER TABLE for existing installations (idempotent)
+DO $$ BEGIN
+  ALTER TABLE tanshin_forecasts ADD COLUMN IF NOT EXISTS rev_actual NUMERIC;
+  ALTER TABLE tanshin_forecasts ADD COLUMN IF NOT EXISTS op_actual NUMERIC;
+  ALTER TABLE tanshin_forecasts ADD COLUMN IF NOT EXISTS ni_actual NUMERIC;
+  ALTER TABLE tanshin_forecasts ADD COLUMN IF NOT EXISTS rev_prior NUMERIC;
+  ALTER TABLE tanshin_forecasts ADD COLUMN IF NOT EXISTS op_prior NUMERIC;
+  ALTER TABLE tanshin_forecasts ADD COLUMN IF NOT EXISTS ni_prior NUMERIC;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
 -- 6. app_config — アプリ設定（APIキー等の永続保存）
 CREATE TABLE IF NOT EXISTS app_config (

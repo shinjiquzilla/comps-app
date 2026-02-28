@@ -447,9 +447,10 @@ def load_forecast_history(code=None):
 
 def save_forecast(code, forecast_data):
     """
-    1社分の業績予想を upsert。
+    1社分の業績予想（＋経営成績実績値）を upsert。
     fy_month + period_type が必須。不明な場合は 'unknown' で保存。
     同じ (code, fy_month, period_type) の組み合わせは上書き（予想修正への対応）。
+    実績値（rev_actual等）がdictに含まれていれば同時に保存。
     """
     sb = get_supabase()
     if sb is None:
@@ -471,12 +472,59 @@ def save_forecast(code, forecast_data):
         "period_type": period_type,
         "updated_at": datetime.utcnow().isoformat(),
     }
+    # 経営成績実績値（Calendarize LTM計算用）
+    for key in ('rev_actual', 'op_actual', 'ni_actual',
+                'rev_prior', 'op_prior', 'ni_prior'):
+        if key in forecast_data and forecast_data[key] is not None:
+            row[key] = forecast_data[key]
+
     try:
         sb.table("tanshin_forecasts").upsert(
             row, on_conflict="code,fy_month,period_type"
         ).execute()
     except Exception:
         pass
+
+
+def load_tanshin_actuals(code):
+    """
+    tanshin_forecasts テーブルから実績値を四半期別に取得。
+    Calendarize LTM計算用。
+
+    Returns: dict keyed by period_type:
+        {
+            'Q3': {'rev_actual': ..., 'op_actual': ..., 'ni_actual': ...,
+                   'rev_prior': ..., 'op_prior': ..., 'ni_prior': ...,
+                   'fy_month': '2026-03'},
+            'FY': {'rev_actual': ..., ...},
+            ...
+        }
+    """
+    sb = get_supabase()
+    if sb is None:
+        return {}
+    try:
+        resp = (sb.table("tanshin_forecasts")
+                .select("*")
+                .eq("code", code)
+                .order("fy_month", desc=True)
+                .execute())
+        result = {}
+        for row in (resp.data or []):
+            pt = row.get("period_type", "")
+            if pt and pt not in result and row.get("rev_actual") is not None:
+                result[pt] = {
+                    'rev_actual': row.get('rev_actual'),
+                    'op_actual': row.get('op_actual'),
+                    'ni_actual': row.get('ni_actual'),
+                    'rev_prior': row.get('rev_prior'),
+                    'op_prior': row.get('op_prior'),
+                    'ni_prior': row.get('ni_prior'),
+                    'fy_month': row.get('fy_month', ''),
+                }
+        return result
+    except Exception:
+        return {}
 
 
 def save_all_forecasts(forecasts_dict):
