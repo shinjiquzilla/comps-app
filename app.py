@@ -164,14 +164,12 @@ st.set_page_config(
     layout="wide",
 )
 
-st.markdown("""
+import base64 as _b64
+_logo_path = _Path(__file__).parent / "logo.png"
+_logo_b64 = _b64.b64encode(_logo_path.read_bytes()).decode() if _logo_path.exists() else ""
+st.markdown(f"""
 <div style="display:flex; align-items:center; gap:12px; margin-bottom:4px;">
-  <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-    <rect x="2" y="18" width="6" height="16" rx="1.5" fill="#45b5e6"/>
-    <rect x="11" y="10" width="6" height="24" rx="1.5" fill="#45b5e6" opacity="0.75"/>
-    <rect x="20" y="14" width="6" height="20" rx="1.5" fill="#45b5e6" opacity="0.55"/>
-    <rect x="29" y="6" width="6" height="28" rx="1.5" fill="#45b5e6" opacity="0.85"/>
-  </svg>
+  <img src="data:image/png;base64,{_logo_b64}" style="height:40px; width:auto;" alt="logo">
   <span style="font-size:2rem; font-weight:700; color:#333333;">類似上場企業比較分析（Comps）自動生成ツール</span>
 </div>
 """, unsafe_allow_html=True)
