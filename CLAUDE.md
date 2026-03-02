@@ -350,6 +350,7 @@ streamlit, yfinance（フォールバック専用）, openpyxl, pymupdf, request
 ## 修正履歴
 | 日付 | コミット | 内容 |
 |------|---------|------|
+| 2026/3/2 | — | タイトル・フッターに（β版）を追記 |
 | 2026/2/28 | — | J-Quants `/v2/fins/summary` メイン化: `jquants_client.py`新規作成、P&L・予想・株式数・DPSをJ-Quantsから取得、EDINETはBS・D&Aのみ使用に変更、`jquants_fins`テーブル追加 |
 | 2026/2/28 | 2d056cb | J-Quants API対応: 株価取得をyfinanceからJ-Quants APIに切り替え、発行済株式数をEDINET算出に変更 |
 | 2026/2/28 | bf029d7 | タイトル行右端にくじらキャピタルロゴ（横型PNG、base64埋め込み）を配置 |

@@ -170,7 +170,7 @@ _logo_path = _Path(__file__).parent / "logo.png"
 _logo_b64 = _b64.b64encode(_logo_path.read_bytes()).decode() if _logo_path.exists() else ""
 st.markdown(f"""
 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-  <span style="font-size:2rem; font-weight:700; color:#333333;">類似上場企業比較分析（Comps）自動生成ツール</span>
+  <span style="font-size:2rem; font-weight:700; color:#333333;">類似上場企業比較分析（Comps）自動生成ツール（β版）</span>
   <img src="data:image/png;base64,{_logo_b64}" style="height:36px; width:auto;" alt="logo">
 </div>
 """, unsafe_allow_html=True)
@@ -1625,4 +1625,4 @@ render();
 # ---------------------------------------------------------------------------
 
 st.divider()
-st.caption("くじらキャピタル株式会社 | Comps自動生成ツール")
+st.caption("くじらキャピタル株式会社 | Comps自動生成ツール（β版）")
