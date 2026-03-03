@@ -1,0 +1,44 @@
+{
+  "fy_end_month": 3,
+  "accounting": "J-GAAP",
+  "quarters": {
+    "FY": {
+      "fy_year": "2025-03-31",
+      "revenue": 43185.0,
+      "op": 2600.0,
+      "ni": 2194.0,
+      "equity": 22713.0,
+      "equity_ratio": 0.526
+    },
+    "Q3": {
+      "fy_year": "2026-03-31",
+      "revenue": 32064.0,
+      "op": 1934.0,
+      "ni": 1675.0,
+      "equity": 24314.0,
+      "equity_ratio": 0.541
+    },
+    "Q3_prior": {
+      "fy_year": "2025-03-31",
+      "revenue": 32273.0,
+      "op": 1948.0,
+      "ni": 1801.0,
+      "equity": 21957.0,
+      "equity_ratio": 0.518
+    }
+  },
+  "forecast": {
+    "rev_forecast": 42300.0,
+    "op_forecast": 2100.0,
+    "ni_forecast": 1600.0,
+    "eps_forecast": 203.85,
+    "dps_forecast": 90.0
+  },
+  "shares": {
+    "shares_issued": 8450.099,
+    "treasury_shares": 604.498
+  },
+  "_source": "jquants",
+  "_fetched_date": "2026-03-03",
+  "_raw_record_count": 21
+}

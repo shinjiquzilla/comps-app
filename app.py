@@ -338,10 +338,13 @@ with st.sidebar:
 
 col1, col2 = st.columns([3, 1])
 
+# URL query param support: ?codes=6763,6989
+_url_codes = st.query_params.get("codes", "")
+
 with col1:
     codes_input = st.text_input(
         "証券コード（カンマ区切り、スペースなし）",
-        value="",
+        value=_url_codes,
         placeholder="例: 6763,6989,6768,241A",
     )
 

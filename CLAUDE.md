@@ -22,6 +22,10 @@ streamlit run app.py
 | `financial_calc.py` | LTM・EBITDA・EV・マルチプル計算（J-Quants優先・Calendarize対応） | `build_company_data()`, `determine_calendarize_pattern()`, `calc_ltm_calendarized()` |
 | `comps_generator.py` | Excel Comps表生成（openpyxl） | `generate_comps(config, path)` |
 | `supabase_client.py` | Supabase DB/Storage ラッパー（全データの永続化） | `load_edinet_data()`, `load_stock_data()`, `load_forecasts()`, `save_jquants_fins()`, `load_jquants_fins()` |
+| `generate_profile.py` | **Company Profile PPTX生成CLI** | `main()` |
+| `profile_data_collector.py` | EDINET有報プロファイル抽出 + 全ソース統合 | `collect_profile_data()`, `extract_profile_from_edinet()` |
+| `profile_pptx_builder.py` | python-pptx スライド生成（Overview, Directors, Comps, Financial） | `build_profile_pptx()` |
+| `profile_web_collector.py` | Wikipedia + Claude API 企業情報構造化抽出 | `collect_web_data()`, `fetch_wikipedia()` |
 | `auth.py` | Supabase GoTrue認証（オプション・無効化済み） | — |
 | `schema.sql` | PostgreSQLテーブル定義（6テーブル + jquants_fins） | — |
 | `migrate_to_supabase.py` | ローカルdata/ → Supabase一括移行スクリプト | — |
