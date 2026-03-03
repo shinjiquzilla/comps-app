@@ -13,6 +13,7 @@ Comps自動生成 Streamlit アプリ
 
 import io
 import os
+import re
 import sys
 import time
 import traceback
@@ -165,9 +166,167 @@ st.set_page_config(
     layout="wide",
 )
 
+# ---------------------------------------------------------------------------
+# Mode routing: ?mode=profile → Company Profile 生成画面
+# ---------------------------------------------------------------------------
+_app_mode = st.query_params.get("mode", "comps")
+
 import base64 as _b64
 _logo_path = _Path(__file__).parent / "logo.png"
 _logo_b64 = _b64.b64encode(_logo_path.read_bytes()).decode() if _logo_path.exists() else ""
+
+if _app_mode == "profile":
+    # ===================================================================
+    # Company Profile 生成画面
+    # ===================================================================
+    st.markdown(f"""
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+      <span style="font-size:2rem; font-weight:700; color:#333333;">Company Profile 自動生成（β版）</span>
+      <img src="data:image/png;base64,{_logo_b64}" style="height:36px; width:auto;" alt="logo">
+    </div>
+    """, unsafe_allow_html=True)
+    st.caption("証券コードを入力して「生成」ボタンを押すと、Company Profile（PowerPoint）を自動生成します。")
+
+    # Custom CSS（Compsと共通）
+    st.markdown("""
+    <style>
+    .stButton > button[kind="primary"] { background-color: #45b5e6; border-color: #45b5e6; }
+    .stButton > button[kind="primary"]:hover { background-color: #3a9cc4; border-color: #3a9cc4; }
+    [data-testid="stHorizontalBlock"] [data-testid="stButton"] { margin-top: 25px; }
+    input::placeholder { color: #999 !important; opacity: 1 !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # URL params
+    _url_code = st.query_params.get("codes", "").split(",")[0].strip()
+    _url_comps = st.query_params.get("comps", "")
+
+    _pcol1, _pcol2 = st.columns([3, 1])
+    with _pcol1:
+        _profile_code = st.text_input(
+            "対象企業の証券コード（4桁）",
+            value=_url_code,
+            placeholder="例: 6763",
+            key="profile_target_code",
+        )
+    with _pcol2:
+        _profile_gen_btn = st.button("▶ Profile生成", type="primary", use_container_width=True)
+
+    _profile_comps_input = st.text_input(
+        "Comps対象企業（カンマ区切り、オプション）",
+        value=_url_comps,
+        placeholder="例: 6989,6768,6779",
+        key="profile_comps_codes",
+    )
+
+    if _profile_gen_btn and _profile_code.strip():
+        _target_code = _profile_code.strip()
+        _comps_list = [c.strip() for c in _profile_comps_input.split(",") if c.strip()]
+
+        with st.spinner(f"{_target_code} のCompany Profileを生成中..."):
+            try:
+                import tempfile as _tempfile
+                import traceback as _tb
+
+                from profile_data_collector import collect_profile_data
+                from profile_pptx_builder import build_profile_pptx
+
+                # Step 1: プロファイルデータ収集
+                _status = st.empty()
+                _status.info("Step 1/3: プロファイルデータを収集中...")
+                _profile_data = collect_profile_data(_target_code)
+
+                # Step 2: Comps データ収集
+                _comps_result = []
+                if _comps_list:
+                    _status.info("Step 2/3: Compsデータを収集中...")
+                    _all_codes = [_target_code] + [c for c in _comps_list if c != _target_code]
+
+                    _jquants_all = {}
+                    try:
+                        for _c in _all_codes:
+                            _jq = fetch_fins_summary(_c)
+                            if _jq:
+                                _jquants_all[_c] = _jq
+                    except Exception:
+                        pass
+
+                    from edinet_client import fetch_companies_batch as _fetch_batch
+                    _edinet_all = _fetch_batch(_all_codes, use_cache=True)
+
+                    for _c in _all_codes:
+                        try:
+                            _stk = fetch_stock_info(_c)
+                            _edi = _edinet_all.get(_c, {})
+                            _jqd = _jquants_all.get(_c)
+                            _fcs = {}
+                            if _HAS_SUPABASE:
+                                try:
+                                    _af = load_forecasts()
+                                    if _af and _c in _af:
+                                        _fcs = {'forecast': _af[_c]}
+                                except Exception:
+                                    pass
+                            _cd = build_company_data(_c, _edi, _fcs, _stk, jquants_data=_jqd)
+                            _comps_result.append(_cd)
+                        except Exception:
+                            pass
+
+                # Step 3: PPTX 生成
+                _status.info("Step 3/3: PowerPointを生成中...")
+                with _tempfile.NamedTemporaryFile(suffix='.pptx', delete=False) as _tmp:
+                    _tmp_path = _tmp.name
+                build_profile_pptx(_profile_data, _comps_result, _tmp_path)
+
+                with open(_tmp_path, 'rb') as _f:
+                    _pptx_bytes = _f.read()
+
+                _status.empty()
+
+                _company_name = _profile_data.get('company_name_en') or _profile_data.get('company_name', _target_code)
+                _safe_name = re.sub(r'[^\w\s-]', '', _company_name).strip().replace(' ', '_') if 'company_name_en' in _profile_data else _target_code
+
+                st.success(f"Company Profile 生成完了: {_company_name}")
+
+                # スライド数の表示
+                _n_directors = len(_profile_data.get('directors', []))
+                _n_dir_slides = max(1, (_n_directors + 5) // 6)
+                _n_comps_slides = 2 if _comps_result else 0
+                _n_fin_slides = 1 if _comps_result else 0
+                _total_slides = 1 + _n_dir_slides + _n_comps_slides + _n_fin_slides
+                st.caption(f"スライド数: {_total_slides}（Overview: 1, Directors: {_n_dir_slides}"
+                           f"{', Comps: 2' if _comps_result else ''}"
+                           f"{', Financial: 1' if _comps_result else ''}）")
+
+                st.download_button(
+                    label="⬇ Company Profile (.pptx) をダウンロード",
+                    data=_pptx_bytes,
+                    file_name=f"{_target_code}_{_safe_name}_Company_Profile.pptx",
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    type="primary",
+                )
+
+                try:
+                    os.unlink(_tmp_path)
+                except OSError:
+                    pass
+
+            except Exception as _e:
+                st.error(f"Profile生成エラー: {_e}")
+                st.code(_tb.format_exc())
+
+    elif _profile_gen_btn:
+        st.warning("証券コードを入力してください。")
+
+    # Footer
+    st.divider()
+    st.caption("くじらキャピタル株式会社 | Company Profile自動生成ツール（β版）")
+
+    st.stop()  # Comps画面のコードを実行しない
+
+# ===================================================================
+# Comps 画面（従来のメイン画面）
+# ===================================================================
 st.markdown(f"""
 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
   <span style="font-size:2rem; font-weight:700; color:#333333;">類似上場企業比較分析（Comps）自動生成ツール（β版）</span>
