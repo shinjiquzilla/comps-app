@@ -424,8 +424,16 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data,
             if pe:
                 bs_date = pe.replace('-', '/')
 
-        # pl_history: 過去FYデータ
+        # pl_history: 過去FYデータ（fy_historyがない旧キャッシュはquartersからフォールバック）
         pl_history = jquants_data.get('fy_history', [])
+        if not pl_history and quarters.get('FY'):
+            fy_q = quarters['FY']
+            pl_history = [{
+                'fy_year': fy_q.get('fy_year', ''),
+                'revenue': fy_q.get('revenue'),
+                'op': fy_q.get('op'),
+                'ni': fy_q.get('ni'),
+            }]
 
         # ltm_components: LTM計算内訳
         ltm_components = None
