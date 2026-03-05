@@ -303,12 +303,26 @@ def _organize_quarterly_data(records):
         'treasury_shares': _safe_thousands(shares_source.get('TrShFY')),
     }
 
+    # fy_history: 過去FYデータ（直近3年分）
+    fy_history = []
+    for (fy, pt), rec in best_records.items():
+        if pt == 'FY':
+            fy_history.append({
+                'fy_year': fy,
+                'revenue': _safe_millions(rec.get('Sales')),
+                'op': _safe_millions(rec.get('OP')),
+                'ni': _safe_millions(rec.get('NP')),
+            })
+    fy_history.sort(key=lambda x: x['fy_year'], reverse=True)
+    fy_history = fy_history[:3]
+
     return {
         'fy_end_month': fy_end_month,
         'accounting': accounting,
         'quarters': quarters,
         'forecast': forecast,
         'shares': shares,
+        'fy_history': fy_history,
         '_source': 'jquants',
         '_fetched_date': date.today().isoformat(),
         '_raw_record_count': len(records),

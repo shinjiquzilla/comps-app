@@ -424,6 +424,60 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data,
             if pe:
                 bs_date = pe.replace('-', '/')
 
+        # pl_history: 過去FYデータ
+        pl_history = jquants_data.get('fy_history', [])
+
+        # ltm_components: LTM計算内訳
+        ltm_components = None
+        if used_pattern in ('2Q', 'Q1', 'Q3'):
+            fy_q = quarters.get('FY', {})
+            sub_q = quarters.get(used_pattern + '_prior', {})
+            add_q = quarters.get(used_pattern, {})
+            ltm_components = {
+                'base': {
+                    'fy_year': fy_q.get('fy_year', ''),
+                    'period': 'FY',
+                    'revenue': fy_q.get('revenue'),
+                    'op': fy_q.get('op'),
+                    'ni': fy_q.get('ni'),
+                },
+                'subtract': {
+                    'fy_year': sub_q.get('fy_year', ''),
+                    'period': used_pattern,
+                    'revenue': sub_q.get('revenue'),
+                    'op': sub_q.get('op'),
+                    'ni': sub_q.get('ni'),
+                },
+                'add': {
+                    'fy_year': add_q.get('fy_year', ''),
+                    'period': used_pattern,
+                    'revenue': add_q.get('revenue'),
+                    'op': add_q.get('op'),
+                    'ni': add_q.get('ni'),
+                },
+                'result': {
+                    'revenue': rev_ltm,
+                    'op': op_ltm,
+                    'ni': ni_ltm,
+                },
+            }
+        elif used_pattern == 'FY':
+            fy_q = quarters.get('FY', {})
+            ltm_components = {
+                'base': {
+                    'fy_year': fy_q.get('fy_year', ''),
+                    'period': 'FY',
+                    'revenue': fy_q.get('revenue'),
+                    'op': fy_q.get('op'),
+                    'ni': fy_q.get('ni'),
+                },
+                'result': {
+                    'revenue': rev_ltm,
+                    'op': op_ltm,
+                    'ni': ni_ltm,
+                },
+            }
+
         return {
             'code': code_4,
             'name': company_name,
@@ -448,6 +502,8 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data,
             'ni_forecast': ni_fwd,
             'ebitda_forecast': ebitda_fwd,
             'dps': dps,
+            'pl_history': pl_history,
+            'ltm_components': ltm_components,
             '_ev': ev,
             '_multiples': multiples,
             '_calendarize_expected': calendarize_pattern,
@@ -608,6 +664,8 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data,
         'ni_forecast': forecast.get('ni_forecast'),
         'ebitda_forecast': ebitda_fwd,
         'dps': dps_actual,
+        'pl_history': [],
+        'ltm_components': None,
         # デバッグ・Calendarize用
         '_ev': ev,
         '_multiples': multiples,
