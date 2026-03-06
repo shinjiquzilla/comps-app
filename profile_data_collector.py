@@ -28,6 +28,32 @@ from edinet_client import (
 )
 
 # ---------------------------------------------------------------------------
+# Company name lookup from DealPortal companies master
+# ---------------------------------------------------------------------------
+
+def _lookup_company_name(code_4: str) -> str:
+    """Look up Japanese company name from DealPortal companies master table."""
+    try:
+        from dealportal_supabase import get_dealportal_supabase
+        sb = get_dealportal_supabase()
+        if sb:
+            resp = (
+                sb.table("companies")
+                .select("name_ja")
+                .eq("ticker", code_4)
+                .limit(1)
+                .execute()
+            )
+            if resp.data and resp.data[0].get("name_ja"):
+                name = resp.data[0]["name_ja"]
+                print(f"  [Companies Master] {code_4} → {name}")
+                return name
+    except Exception as e:
+        print(f"  [Companies Master] lookup failed: {e}")
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # EDINET Profile Elements
 # ---------------------------------------------------------------------------
 
@@ -338,11 +364,40 @@ def collect_profile_data(code_4, company_name_ja=None, company_url="", use_cache
         meta = load_cached_meta(code_4)
         if meta:
             company_name_ja = meta.get('company_name', '')
+        # Fallback: DealPortal companies master table (JPX 4000+ companies)
+        if not company_name_ja:
+            company_name_ja = _lookup_company_name(code_4)
         if not company_name_ja:
             company_name_ja = code_4
 
     # 2. EDINETプロファイル
     edinet_profile = extract_profile_from_edinet(code_4, use_cache=use_cache)
+
+    # 2b. EDINET有報がない場合（Render等）、DBから既存データをフォールバック取得
+    if not edinet_profile.get('directors') and not edinet_profile.get('shareholders'):
+        try:
+            from dealportal_supabase import load_directors_shareholders, get_existing_profile_data
+            db_directors, db_shareholders = load_directors_shareholders(code_4)
+            if db_directors:
+                edinet_profile['directors'] = db_directors
+                print(f"  [DB Fallback] 役員 {len(db_directors)}名取得")
+            if db_shareholders:
+                edinet_profile['shareholders'] = db_shareholders
+                print(f"  [DB Fallback] 株主 {len(db_shareholders)}名取得")
+
+            # 代表者・事業概要も既存プロフィールから取得
+            if not edinet_profile.get('representative') or not edinet_profile.get('business_description'):
+                existing = get_existing_profile_data(code_4)
+                if existing:
+                    if not edinet_profile.get('representative') and existing.get('representative'):
+                        edinet_profile['representative'] = existing['representative']
+                    if not edinet_profile.get('business_description') and existing.get('business_description'):
+                        edinet_profile['business_description'] = existing['business_description']
+                    if not edinet_profile.get('num_employees') and existing.get('num_employees'):
+                        edinet_profile['num_employees'] = existing['num_employees']
+                    print(f"  [DB Fallback] 既存プロフィールデータを再利用")
+        except Exception as e:
+            print(f"  [DB Fallback] 失敗: {e}")
 
     # 3. Webデータ（Wikipedia + Claude API）
     from profile_web_collector import collect_web_data
@@ -375,10 +430,16 @@ def collect_profile_data(code_4, company_name_ja=None, company_url="", use_cache
         print(f"  [株価] 取得失敗: {e}")
 
     # 6. EDINETデータ（既存 — BS, D&A）
+    # fetch_companies_batch を使用（Supabaseフォールバック対応）
     edinet_financial = {}
     try:
-        from edinet_client import fetch_company_financials
-        edinet_financial = fetch_company_financials(code_4)
+        from edinet_client import fetch_companies_batch
+        batch_result = fetch_companies_batch([code_4])
+        edinet_financial = batch_result.get(code_4, {})
+        if edinet_financial.get('yuho_data') or edinet_financial.get('hanki_data'):
+            print(f"  [EDINET Financial] データ取得成功 (yuho: {bool(edinet_financial.get('yuho_data'))}, hanki: {bool(edinet_financial.get('hanki_data'))})")
+        else:
+            print(f"  [EDINET Financial] データなし")
     except Exception as e:
         print(f"  [EDINET Financial] 取得失敗: {e}")
 
@@ -403,10 +464,18 @@ def collect_profile_data(code_4, company_name_ja=None, company_url="", use_cache
         print(f"  [株価履歴] {len(stock_history)}日分取得")
 
     # 9. 統合
-    # 英語社名: stock_data → web_data → 日本語名にフォールバック
-    name_en = stock_data.get('company_name_en', '')
+    # 英語社名: JPX master → stock_data → web_data → 日本語名にフォールバック
+    name_en = ''
+    try:
+        from dealportal_supabase import lookup_company_name_en
+        name_en = lookup_company_name_en(code_4)
+        if name_en:
+            print(f"  [英語社名] JPXマスタから取得: {name_en}")
+    except Exception:
+        pass
+    if not name_en:
+        name_en = stock_data.get('company_name_en', '')
     if not name_en and web_data:
-        # Claude API で日本語→英語変換を試みた結果がある場合
         name_en = web_data.get('company_name_en', '')
     if not name_en:
         name_en = company_name_ja  # 最終フォールバック
