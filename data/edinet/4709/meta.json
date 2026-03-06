@@ -1,0 +1,35 @@
+{
+  "last_searched": "2026-03-06",
+  "search_days": 730,
+  "company_name": "ＩＤホールディングス",
+  "docs": [
+    {
+      "docID": "S100TQ5S",
+      "docTypeCode": "120",
+      "periodEnd": "2024-03-31",
+      "filerName": "株式会社ＩＤホールディングス",
+      "secCode": "47090"
+    },
+    {
+      "docID": "S100UMHV",
+      "docTypeCode": "160",
+      "periodEnd": "2025-03-31",
+      "filerName": "株式会社ＩＤホールディングス",
+      "secCode": "47090"
+    },
+    {
+      "docID": "S100VZBH",
+      "docTypeCode": "120",
+      "periodEnd": "2025-03-31",
+      "filerName": "株式会社ＩＤホールディングス",
+      "secCode": "47090"
+    },
+    {
+      "docID": "S100WYYI",
+      "docTypeCode": "160",
+      "periodEnd": "2026-03-31",
+      "filerName": "株式会社ＩＤホールディングス",
+      "secCode": "47090"
+    }
+  ]
+}
