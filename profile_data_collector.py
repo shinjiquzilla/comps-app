@@ -139,6 +139,21 @@ def extract_profile_from_edinet(code_4, use_cache=True):
             break
 
     if not yuho_zip:
+        # Playwright で EDINET から自動ダウンロード
+        try:
+            from edinet_scraper import search_and_download
+            from playwright.sync_api import sync_playwright as _pw_check
+            print(f"  [EDINET Profile] Playwright で有報DL中: {code_4}")
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            docs = search_and_download(code_4, period="1year", cache_dir=cache_dir)
+            for doc in docs:
+                if doc['doc_type'] == 'yuho':
+                    yuho_zip = doc['zip_path']
+                    break
+        except Exception as e:
+            print(f"  [EDINET Profile] Playwright DL失敗: {e}")
+
+    if not yuho_zip:
         print(f"  [EDINET Profile] 有報ZIPが見つかりません: {code_4}")
         return {}
 
