@@ -60,6 +60,8 @@ def _lookup_company_name(code_4: str) -> str:
 PROFILE_ELEMENTS = {
     # 代表者
     'jpcrp_cor:TitleAndNameOfRepresentativeCoverPage': 'representative',
+    # 本店所在地（表紙）
+    'jpcrp_cor:AddressOfRegisteredHeadquarterCoverPage': 'headquarters',
     # 事業内容
     'jpcrp_cor:DescriptionOfBusinessTextBlock': 'business_description',
     # 沿革
@@ -140,18 +142,31 @@ def extract_profile_from_edinet(code_4, use_cache=True):
 
     if not yuho_zip:
         # Playwright で EDINET から自動ダウンロード
+        # FastAPI (asyncio) 内では Sync API が使えないため別スレッドで実行
         try:
             from edinet_scraper import search_and_download
             from playwright.sync_api import sync_playwright as _pw_check
+            import concurrent.futures
             print(f"  [EDINET Profile] Playwright で有報DL中: {code_4}")
             cache_dir.mkdir(parents=True, exist_ok=True)
-            docs = search_and_download(code_4, period="1year", cache_dir=cache_dir)
+
+            def _download():
+                return search_and_download(code_4, period="1year", cache_dir=cache_dir)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_download)
+                docs = future.result(timeout=120)
+
+            print(f"  [EDINET Profile] Playwright DL結果: {len(docs)}件")
             for doc in docs:
+                print(f"    doc_type={doc['doc_type']}, zip_path={doc.get('zip_path')}")
                 if doc['doc_type'] == 'yuho':
                     yuho_zip = doc['zip_path']
                     break
         except Exception as e:
+            import traceback
             print(f"  [EDINET Profile] Playwright DL失敗: {e}")
+            traceback.print_exc()
 
     if not yuho_zip:
         print(f"  [EDINET Profile] 有報ZIPが見つかりません: {code_4}")
@@ -168,6 +183,7 @@ def extract_profile_from_edinet(code_4, use_cache=True):
     # プロファイルデータを抽出
     result = {
         'representative': '',
+        'headquarters': '',
         'num_employees': None,
         'business_description': '',
         'company_history': '',
@@ -202,6 +218,10 @@ def extract_profile_from_edinet(code_4, use_cache=True):
         # 代表者（表紙）
         if element_id == 'jpcrp_cor:TitleAndNameOfRepresentativeCoverPage':
             result['representative'] = value_str
+
+        # 本店所在地（表紙）
+        elif element_id == 'jpcrp_cor:AddressOfRegisteredHeadquarterCoverPage':
+            result['headquarters'] = value_str
 
         # 事業内容
         elif element_id == 'jpcrp_cor:DescriptionOfBusinessTextBlock':
@@ -414,13 +434,20 @@ def collect_profile_data(code_4, company_name_ja=None, company_url="", use_cache
         except Exception as e:
             print(f"  [DB Fallback] 失敗: {e}")
 
-    # 3. Webデータ（Wikipedia + Claude API）
+    # 3. Webデータ（会社HP + Claude API）
     from profile_web_collector import collect_web_data
+    # EDINET overview: 事業内容 + 沿革を結合してLLMに渡す（設立年・本社所在地抽出用）
+    edinet_overview_parts = []
+    if edinet_profile.get('business_description'):
+        edinet_overview_parts.append(edinet_profile['business_description'])
+    if edinet_profile.get('company_history'):
+        edinet_overview_parts.append(edinet_profile['company_history'])
+    edinet_overview = "\n\n".join(edinet_overview_parts)
     web_data = collect_web_data(
         code_4,
         company_name_ja,
         company_url=company_url,
-        edinet_overview=edinet_profile.get('business_description', ''),
+        edinet_overview=edinet_overview,
         use_cache=use_cache,
     )
 
@@ -495,6 +522,17 @@ def collect_profile_data(code_4, company_name_ja=None, company_url="", use_cache
     if not name_en:
         name_en = company_name_ja  # 最終フォールバック
 
+    # EDINET → web_data フォールバック（headquarters, founding_year）
+    if web_data is None:
+        web_data = {}
+    if not web_data.get('headquarters') and edinet_profile.get('headquarters'):
+        web_data['headquarters'] = edinet_profile['headquarters']
+    if not web_data.get('founding_year') and edinet_profile.get('company_history'):
+        import re as _re
+        _m = _re.search(r'(19\d{2}|20[0-2]\d)年.*?(設立|創立|創業)', edinet_profile['company_history'])
+        if _m:
+            web_data['founding_year'] = _m.group(1)
+
     profile = {
         'code': code_4,
         'company_name': company_name_ja,
@@ -508,7 +546,7 @@ def collect_profile_data(code_4, company_name_ja=None, company_url="", use_cache
         'shareholders': edinet_profile.get('shareholders', []),
         'directors': edinet_profile.get('directors', []),
 
-        # Web data (Claude API)
+        # Web data (Claude API) — EDINET headquarters/founding_year フォールバック
         'web': web_data,
 
         # Financial data

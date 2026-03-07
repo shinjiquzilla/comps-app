@@ -658,7 +658,14 @@ def _fetch_via_playwright(code_4, use_cache=True, period="1year"):
     if need_download:
         try:
             from edinet_scraper import search_and_download
-            docs = search_and_download(code_4, period=period, cache_dir=cache_dir)
+            import concurrent.futures
+
+            def _pw_download():
+                return search_and_download(code_4, period=period, cache_dir=cache_dir)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_pw_download)
+                docs = future.result(timeout=120)
 
             for doc in docs:
                 dt = doc['doc_type']  # "yuho" or "hanki"
