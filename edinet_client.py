@@ -573,110 +573,182 @@ def extract_financial_data(zip_bytes, include_prior=False):
 
 
 # ---------------------------------------------------------------------------
-# High-level API: 1社分の財務データ取得
+# High-level API: Playwright ベースの財務データ取得
 # ---------------------------------------------------------------------------
 
-def fetch_company_financials(code_4, days=90, progress_callback=None, use_cache=True):
+def _fetch_via_playwright(code_4, use_cache=True, period="1year"):
     """
-    証券コード（4桁）から EDINET type=5 CSV 経由で財務データを取得。
-    """
-    api_key = load_api_key()
-    session = make_session(verify_ssl=False)
+    Playwright で EDINET Web UI から CSV ZIP をダウンロードし、パースして返す。
 
-    # キャッシュ確認
-    if use_cache:
+    キャッシュ優先順位:
+      1. パース済みJSON (yuho_parsed.json / hanki_parsed.json)
+      2. ローカル ZIP ファイル
+      3. Supabase
+      4. Playwright でダウンロード
+
+    Returns: fetch_company_financials() と同じ形式の dict
+    """
+    cache_dir = get_cache_dir(code_4) if use_cache else None
+
+    result = {
+        'company_name': '',
+        'yuho_data': {},
+        'hanki_data': {},
+        'hanki_prior_data': {},
+        'yuho_doc': None,
+        'hanki_doc': None,
+        '_debug': {},
+    }
+    debug_info = {}
+    need_download = []  # Playwright DL が必要な書類種別
+
+    for doc_type in ('yuho', 'hanki'):
+        # --- 1. パース済みキャッシュ ---
+        if cache_dir:
+            parsed_cache = cache_dir / f"{doc_type}_parsed.json"
+            if parsed_cache.exists():
+                try:
+                    cached = json.loads(parsed_cache.read_text(encoding='utf-8'))
+                    if doc_type == 'hanki':
+                        result['hanki_data'] = cached.get('current', {})
+                        result['hanki_prior_data'] = cached.get('prior', {})
+                    else:
+                        result[f'{doc_type}_data'] = cached
+                    debug_info[f'{doc_type}_parsed_cache'] = True
+                    continue
+                except Exception:
+                    pass
+
+        # --- 2. ローカル ZIP キャッシュ ---
+        if cache_dir:
+            import glob
+            pattern = str(cache_dir / f"{doc_type}_*.zip")
+            zips = sorted(glob.glob(pattern), reverse=True)
+            if not zips:
+                # edinet_scraper 形式のファイル名もチェック
+                simple = cache_dir / f"{doc_type}_{code_4}.zip"
+                if simple.exists():
+                    zips = [str(simple)]
+            if zips:
+                zip_bytes = Path(zips[0]).read_bytes()
+                _parse_and_store(result, debug_info, doc_type, zip_bytes, cache_dir)
+                debug_info[f'{doc_type}_zip_cache'] = True
+                continue
+
+        # --- 3. Supabase フォールバック ---
+        if _HAS_SUPABASE and use_cache:
+            sb_data = sb_load_edinet_data(code_4)
+            if sb_data:
+                if doc_type == 'yuho' and sb_data.get('yuho_data'):
+                    result['yuho_data'] = sb_data['yuho_data']
+                    debug_info['yuho_supabase'] = True
+                    continue
+                elif doc_type == 'hanki':
+                    if sb_data.get('hanki_data'):
+                        result['hanki_data'] = sb_data['hanki_data']
+                    if sb_data.get('hanki_prior_data'):
+                        result['hanki_prior_data'] = sb_data['hanki_prior_data']
+                    if result['hanki_data']:
+                        debug_info['hanki_supabase'] = True
+                        continue
+
+        need_download.append(doc_type)
+
+    # --- 4. Playwright ダウンロード ---
+    if need_download:
+        try:
+            from edinet_scraper import search_and_download
+            docs = search_and_download(code_4, period=period, cache_dir=cache_dir)
+
+            for doc in docs:
+                dt = doc['doc_type']  # "yuho" or "hanki"
+                if dt not in ('yuho', 'hanki'):
+                    continue
+                if dt not in need_download:
+                    continue
+
+                zip_bytes = doc['zip_bytes']
+                _parse_and_store(result, debug_info, dt, zip_bytes, cache_dir)
+                debug_info[f'{dt}_playwright'] = True
+
+                # company_name
+                if not result['company_name'] and doc.get('title'):
+                    import re
+                    m = re.search(r'[\s　]([^\s　]+(?:株式会社|工業|製作所|電気|通信)[^\s　]*)', doc['title'])
+                    if not m:
+                        # タイトルから提出者を推定（最後の括弧内）
+                        m2 = re.search(r'[（(]([^）)]+)[）)]', doc['title'])
+                        if m2:
+                            result['company_name'] = m2.group(1).replace('株式会社', '').strip()
+
+        except Exception as e:
+            print(f"[EDINET Playwright] {code_4}: エラー - {e}")
+
+    # company_name フォールバック: meta.json から
+    if not result['company_name'] and cache_dir:
         meta = load_cached_meta(code_4)
-        if meta and meta.get("docs") is not None:
-            return _process_docs_for_company(
-                session, api_key, code_4, meta["docs"], use_cache=True
-            )
+        if meta:
+            result['company_name'] = meta.get('company_name', '')
 
-    sec_code = to_sec_code(code_4)
-    docs = search_documents(session, api_key, sec_code, days=days,
-                            progress_callback=progress_callback)
+    result['_debug'] = debug_info
 
-    result = _process_docs_for_company(session, api_key, code_4, docs, use_cache=use_cache)
-
-    # meta.json に保存
-    if use_cache and docs:
-        company_name = ""
-        for doc in docs:
-            name = doc.get("filerName", "")
-            if name:
-                company_name = name.replace("株式会社", "").strip()
-                break
-        save_meta(code_4, docs, days, company_name)
+    # Supabase 保存
+    if _HAS_SUPABASE and use_cache:
+        if result.get('yuho_data') or result.get('hanki_data'):
+            try:
+                sb_save_edinet_data(code_4, result)
+            except Exception:
+                pass
 
     return result
 
 
+def _parse_and_store(result, debug_info, doc_type, zip_bytes, cache_dir):
+    """ZIP bytes をパースして result dict に格納し、キャッシュ保存。"""
+    if doc_type == 'hanki':
+        parsed = extract_financial_data(zip_bytes, include_prior=True)
+        result['hanki_data'] = parsed.get('current', {})
+        result['hanki_prior_data'] = parsed.get('prior', {})
+        result.setdefault('_unmatched', []).extend(parsed.get('_unmatched', []))
+        debug_info['hanki_prior_keys'] = list(result['hanki_prior_data'].keys())
+        # パース結果キャッシュ保存
+        if cache_dir:
+            try:
+                (cache_dir / f"{doc_type}_parsed.json").write_text(
+                    json.dumps({'current': parsed.get('current', {}),
+                                'prior': parsed.get('prior', {})},
+                               ensure_ascii=False), encoding='utf-8')
+            except Exception:
+                pass
+    else:
+        parsed_data = extract_financial_data(zip_bytes)
+        result.setdefault('_unmatched', []).extend(parsed_data.pop('_unmatched', []))
+        result[f'{doc_type}_data'] = parsed_data
+        if cache_dir:
+            try:
+                (cache_dir / f"{doc_type}_parsed.json").write_text(
+                    json.dumps(parsed_data, ensure_ascii=False), encoding='utf-8')
+            except Exception:
+                pass
+
+
+def fetch_company_financials(code_4, days=90, progress_callback=None, use_cache=True):
+    """
+    証券コード（4桁）から EDINET 経由で財務データを取得。
+    Playwright で EDINET Web UI から CSV ZIP をダウンロードする（高速）。
+    """
+    return _fetch_via_playwright(code_4, use_cache=use_cache)
+
+
 def fetch_companies_batch(codes_4, days=90, progress_callback=None, use_cache=True):
     """
-    複数社の財務データを一括取得。EDINET日付検索は1回のみ。
-    use_cache=True の場合、ローカルキャッシュを優先し、EDINET APIアクセスを最小化する。
-    全社キャッシュ済みならHTTPセッション作成・APIキー読み込みも行わない。
+    複数社の財務データを一括取得。
+    各社について Playwright → キャッシュ → Supabase の優先順で取得。
     Returns: dict {code_4: result_dict}
     """
     results = {}
-    codes_to_search = []  # キャッシュにない企業
-
-    # キャッシュ確認（セッション不要で処理）
-    if use_cache:
-        for code4 in codes_4:
-            meta = load_cached_meta(code4)
-            if meta and meta.get("docs") is not None:
-                # キャッシュ済み: session=None で処理（パース済みキャッシュがあればネットワーク不要）
-                docs = meta["docs"]
-                results[code4] = _process_docs_for_company(
-                    None, None, code4, docs, use_cache=True
-                )
-            else:
-                codes_to_search.append(code4)
-    else:
-        codes_to_search = list(codes_4)
-
-    # Supabaseフォールバック: ローカルキャッシュがない企業をSupabaseから取得
-    if codes_to_search and _HAS_SUPABASE and use_cache:
-        still_missing = []
-        for code4 in codes_to_search:
-            sb_data = sb_load_edinet_data(code4)
-            if sb_data and (sb_data.get('yuho_data') or sb_data.get('hanki_data')):
-                results[code4] = sb_data
-            else:
-                still_missing.append(code4)
-        codes_to_search = still_missing
-
-    # 全社キャッシュ済みならセッション作成もAPIキー読み込みも不要
-    if not codes_to_search:
-        return results
-
-    # キャッシュにない企業のみ EDINET 検索（ここで初めてセッション作成）
-    api_key = load_api_key()
-    session = make_session(verify_ssl=False)
-
-    if codes_to_search:
-        sec_codes = {to_sec_code(c): c for c in codes_to_search}
-
-        all_docs = search_documents_batch(
-            session, api_key, list(sec_codes.keys()), days=days,
-            progress_callback=progress_callback
-        )
-
-        for sec5, code4 in sec_codes.items():
-            docs = all_docs.get(sec5, [])
-            results[code4] = _process_docs_for_company(
-                session, api_key, code4, docs, use_cache=use_cache
-            )
-            # meta.json に保存
-            if use_cache and docs:
-                company_name = ""
-                for doc in docs:
-                    name = doc.get("filerName", "")
-                    if name:
-                        company_name = name.replace("株式会社", "").strip()
-                        break
-                save_meta(code4, docs, days, company_name)
-
+    for code4 in codes_4:
+        results[code4] = _fetch_via_playwright(code4, use_cache=use_cache)
     return results
 
 

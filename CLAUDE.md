@@ -15,7 +15,7 @@ streamlit run app.py
 |---------|------|---------|
 | `app.py` | Streamlit UI・メインフロー | — |
 | `jquants_client.py` | **J-Quants `/v2/fins/summary` 取得・LTM計算・キャッシュ** | `fetch_fins_summary()`, `compute_ltm_from_jquants()` |
-| `edinet_client.py` | EDINET API type=5 CSV取得・パース（BS・D&Aのみ使用） | `fetch_companies_batch()` |
+| `edinet_client.py` | EDINET CSV取得・パース（BS・D&Aのみ使用、**Playwright経由**） | `fetch_companies_batch()` |
 | `tdnet_client.py` | TDnetスクレイピング+PyMuPDF PDF解析（**無効化済み**） | — |
 | `tanshin_parser.py` | 決算短信PDFパーサー（業績予想自動抽出＋経営成績実績抽出＋一括判定） | `parse_tanshin_pdf()`, `parse_tanshin_actuals()`, `identify_tanshin_pdf()`, `save_tanshin_pdf()` |
 | `stock_fetcher.py` | J-Quants API株価取得＋証券コード検証＋永続キャッシュ（yfinanceフォールバック） | `fetch_stock_info()`, `validate_stock_code()` |
@@ -25,7 +25,8 @@ streamlit run app.py
 | `generate_profile.py` | **Company Profile PPTX生成CLI** | `main()` |
 | `profile_data_collector.py` | EDINET有報プロファイル抽出 + 全ソース統合 | `collect_profile_data()`, `extract_profile_from_edinet()` |
 | `profile_pptx_builder.py` | python-pptx スライド生成（Overview, Directors, Comps, Financial） | `build_profile_pptx()` |
-| `profile_web_collector.py` | 会社HP + Wikipedia + Claude API 企業情報構造化抽出 | `collect_web_data()`, `fetch_wikipedia()`, `_guess_company_url()` |
+| `profile_web_collector.py` | 会社HP + Claude API 企業情報構造化抽出 | `collect_web_data()`, `_guess_company_url()` |
+| `edinet_scraper.py` | **Playwright EDINET スクレイパー**（有報・半報CSV自動DL） | `search_and_download()`, `download_and_parse()` |
 | `auth.py` | Supabase GoTrue認証（オプション・無効化済み） | — |
 | `schema.sql` | PostgreSQLテーブル定義（6テーブル + jquants_fins） | — |
 | `migrate_to_supabase.py` | ローカルdata/ → Supabase一括移行スクリプト | — |
@@ -344,8 +345,7 @@ streamlit, yfinance（フォールバック専用）, openpyxl, pymupdf, request
 - **EDINET API Key**: Cloud上では`st.secrets`の`edinet.api_key`で設定。Supabase `app_config`テーブルからのフォールバック読み込みあり。未設定の場合はスキップされ株価のみ取得。`st.secrets`アクセスはtry-exceptで囲むこと
 - **Python 3.13互換性**: Streamlit Cloudは3.13を使用。f-string内のネストクォート（`f'{s["key"]}'`）は3.14では動作するが3.13ではSyntaxError。str連結を使用すること
 - **print()はCloud上で非表示**: Streamlit Cloudのダウンロード可能ログにprint()出力は出ない。デバッグには`st.caption`/`st.warning`を使用
-- **EDINET一括検索**: `fetch_companies_batch()`で全社まとめて1回の日付ループ。N社×日数→1×日数に削減
-- **デフォルト検索期間400日**: 有報は決算後3ヶ月（3月決算→6月提出）、半期報も同様
+- **EDINET取得**: `fetch_companies_batch()` は Playwright 経由で EDINET Web UI から CSV ZIP を自動DL（~10秒/社）。API 730日スキャンは廃止
 - **sys.stdout書き換え禁止**: モジュールのトップレベルで`sys.stdout`を書き換えるとStreamlitのIO破壊でクラッシュ。`if __name__ == '__main__':`ガード必須
 - **未使用.pyでもimportに注意**: Streamlit Cloudは全.pyを走査する場合がある。使わないモジュールでもimportエラーがあるとクラッシュ（auth.pyのgotrueで発生→try/except化）
 - **株価取得**: J-Quants APIがメイン。yfinanceはフォールバック専用（レート制限あり: 3秒ディレイ＋リトライ）。キャッシュヒット時は待機なし
@@ -420,7 +420,7 @@ streamlit, yfinance（フォールバック専用）, openpyxl, pymupdf, request
 ## 既知の課題・TODO
 - TDnet機能は無効化済み（有料サービス）。業績予想は決算短信PDFアップロード or 手動入力で対応
 - 決算短信パーサーは東証規定フォーマットを前提。企業ごとの微差でパース失敗する場合あり → 3段階フォールバックで対応
-- EDINET APIは1日1リクエスト/秒のレート制限あり（`time.sleep(1)`で対応済み）
+- EDINET取得はPlaywright経由（`edinet_scraper.py`）。EDINET REST APIは使用しない
 - yfinanceはJ-Quantsのフォールバック専用。レート制限は永続キャッシュ＋手動株価入力で代替可能
 - Streamlit CloudのNumberColumn formatが効かない→JS付きHTMLテーブルで回避済み
 - IFRS企業のリース負債（`OtherFinancialLiabilities`）は`BondsAndBorrowings`と分離されている場合があり、現状はBondsAndBorrowingsのみ計上。すかいらーく等のIFRS16リース負債は含まれていない可能性がある
