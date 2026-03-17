@@ -436,7 +436,7 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data,
             }]
 
         # Supplement pl_history from Supabase financials table if fewer than 3 FY entries
-        if len(pl_history) < 3 and code:
+        if len(pl_history) < 3 and code_4:
             try:
                 from supabase_client import get_supabase
                 sb = get_supabase()
@@ -444,7 +444,7 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data,
                     existing_years = {h['fy_year'] for h in pl_history}
                     resp = (sb.table("financials")
                             .select("period_end, revenue, operating_income, net_income")
-                            .eq("code", code)
+                            .eq("code", code_4)
                             .eq("doc_type", "yuho")
                             .order("period_end", desc=True)
                             .limit(5)
