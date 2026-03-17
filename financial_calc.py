@@ -435,6 +435,36 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data,
                 'ni': fy_q.get('ni'),
             }]
 
+        # Supplement pl_history from Supabase financials table if fewer than 3 FY entries
+        if len(pl_history) < 3 and code:
+            try:
+                from supabase_client import get_supabase
+                sb = get_supabase()
+                if sb:
+                    existing_years = {h['fy_year'] for h in pl_history}
+                    resp = (sb.table("financials")
+                            .select("period_end, revenue, operating_income, net_income")
+                            .eq("code", code)
+                            .eq("doc_type", "yuho")
+                            .order("period_end", desc=True)
+                            .limit(5)
+                            .execute())
+                    if resp.data:
+                        for row in resp.data:
+                            pe = str(row.get("period_end", ""))
+                            if pe and pe not in existing_years:
+                                pl_history.append({
+                                    'fy_year': pe,
+                                    'revenue': row.get("revenue"),
+                                    'op': row.get("operating_income"),
+                                    'ni': row.get("net_income"),
+                                })
+                                existing_years.add(pe)
+                        pl_history.sort(key=lambda x: x['fy_year'], reverse=True)
+                        pl_history = pl_history[:3]
+            except Exception:
+                pass  # Supabase unavailable, continue with J-Quants data only
+
         # ltm_components: LTM計算内訳
         ltm_components = None
         if used_pattern in ('2Q', 'Q1', 'Q3'):
