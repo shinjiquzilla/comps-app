@@ -425,7 +425,7 @@ def build_company_data(code_4, edinet_data, tdnet_data, stock_data,
                 bs_date = pe.replace('-', '/')
 
         # pl_history: 過去FYデータ（fy_historyがない旧キャッシュはquartersからフォールバック）
-        pl_history = jquants_data.get('fy_history', [])
+        pl_history = jquants_data.get('fy_history') or []
         if not pl_history and quarters.get('FY'):
             fy_q = quarters['FY']
             pl_history = [{
