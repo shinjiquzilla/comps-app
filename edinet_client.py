@@ -63,6 +63,9 @@ ELEMENT_MAP = {
     # CF statement D&A
     'jppfs_cor:DepreciationAndAmortizationOpeCF': 'depreciation',
     'jppfs_cor:DepreciationAndAmortizationOfGoodwillOpeCF': 'depreciation',
+    # CF statement Interest Expense (支払利息)
+    'jppfs_cor:InterestExpensesOpeCF': 'interest_expense',
+    'jppfs_cor:InterestExpensesPaidOpeCFFinCF': 'interest_expense',
     # BS
     'jppfs_cor:CashAndDeposits': 'cash',
     'jppfs_cor:CashAndCashEquivalents': 'cash',
@@ -90,6 +93,9 @@ ELEMENT_MAP = {
     'jpigp_cor:OperatingProfitLossIFRS': 'operating_income',
     'jpigp_cor:ProfitLossAttributableToOwnersOfParentIFRS': 'net_income',
     'jpigp_cor:ProfitLossIFRS': 'profit_loss',
+    # CF statement Interest Expense (IFRS)
+    'jpigp_cor:InterestExpensesOpeCFIFRS': 'interest_expense',
+    'jpigp_cor:InterestPaidOpeCFIFRS': 'interest_expense',
     # CF statement D&A（米綴り Amortization + 英綴り Amortisation 両対応）
     'jpigp_cor:DepreciationAndAmortizationOpeCFIFRS': 'depreciation',
     'jpigp_cor:DepreciationExpenseOpeCFIFRS': 'depreciation',  # 三菱商事等: 減価償却費(CF)
@@ -674,8 +680,10 @@ def _fetch_via_playwright(code_4, use_cache=True, period="1year"):
                 if dt not in need_download:
                     continue
 
-                zip_bytes = doc['zip_bytes']
+                # Read from disk to avoid holding all ZIPs in memory
+                zip_bytes = doc['zip_path'].read_bytes()
                 _parse_and_store(result, debug_info, dt, zip_bytes, cache_dir)
+                del zip_bytes  # Explicitly free memory
                 debug_info[f'{dt}_playwright'] = True
 
                 # company_name
@@ -737,6 +745,108 @@ def _parse_and_store(result, debug_info, doc_type, zip_bytes, cache_dir):
                     json.dumps(parsed_data, ensure_ascii=False), encoding='utf-8')
             except Exception:
                 pass
+
+
+def fetch_multi_year_financials(code_4, use_cache=True):
+    """
+    複数年度の財務データ（D&A・BS）を EDINET 有報から取得。
+    直近2件の有報をダウンロードし、各有報から current + prior の2年分を抽出。
+    最大3年度分のデータを返す。
+
+    Returns:
+        dict: {fy_year: {revenue, op, ni, depreciation, cash, short_term_debt, ...}, ...}
+              fy_year は "2025-03-31" 形式
+    """
+    import concurrent.futures
+
+    cache_dir = get_cache_dir(code_4) if use_cache else None
+    multi_cache = cache_dir / "multi_year_financials.json" if cache_dir else None
+
+    # キャッシュチェック
+    if use_cache and multi_cache and multi_cache.exists():
+        try:
+            data = json.loads(multi_cache.read_text(encoding='utf-8'))
+            if data:
+                print(f"  [EDINET Multi-Year] キャッシュヒット: {len(data)}年度分")
+                return data
+        except Exception:
+            pass
+
+    # Playwright で直近2件の有報をダウンロード
+    all_years = {}  # {fy_year: {financial_data}}
+
+    try:
+        from edinet_scraper import search_and_download
+
+        def _pw_download():
+            return search_and_download(
+                code_4, period="all", cache_dir=cache_dir, max_yuho=2
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_pw_download)
+            docs = future.result(timeout=180)
+
+        # 有報を period_end 降順で処理（新しい有報を優先）
+        yuho_docs = sorted(
+            [d for d in docs if d['doc_type'] == 'yuho'],
+            key=lambda d: d.get('period_end', ''),
+            reverse=True
+        )
+
+        for doc in yuho_docs:
+            period_end = doc.get('period_end', '')
+
+            # Read from disk one at a time to minimize memory usage
+            zip_bytes = doc['zip_path'].read_bytes()
+            parsed = extract_financial_data(zip_bytes, include_prior=True)
+            del zip_bytes  # Explicitly free memory
+            current = parsed.get('current', {})
+            prior = parsed.get('prior', {})
+
+            # current → period_end をキーに格納
+            if period_end and current:
+                if period_end not in all_years:
+                    all_years[period_end] = _extract_year_data(current)
+
+            # prior → period_end から1年前を推定
+            if period_end and prior:
+                try:
+                    parts = period_end.split('-')
+                    prior_year = str(int(parts[0]) - 1)
+                    prior_period_end = f"{prior_year}-{parts[1]}-{parts[2]}"
+                    if prior_period_end not in all_years:
+                        all_years[prior_period_end] = _extract_year_data(prior)
+                except (ValueError, IndexError):
+                    pass
+
+        print(f"  [EDINET Multi-Year] {len(all_years)}年度分取得: {sorted(all_years.keys())}")
+
+    except Exception as e:
+        print(f"  [EDINET Multi-Year] 取得エラー: {e}")
+
+    # キャッシュ保存
+    if use_cache and multi_cache and all_years:
+        try:
+            multi_cache.write_text(
+                json.dumps(all_years, ensure_ascii=False), encoding='utf-8'
+            )
+        except Exception:
+            pass
+
+    return all_years
+
+
+def _extract_year_data(parsed_data):
+    """extract_financial_data() の結果から年度データ用のサブセットを抽出。"""
+    keys = [
+        'revenue', 'operating_income', 'net_income', 'depreciation', 'interest_expense',
+        'cash', 'investment_securities', 'short_term_debt', 'long_term_debt', 'bonds',
+        'current_long_term_debt', 'current_bonds',
+        'lease_debt_current', 'lease_debt_noncurrent',
+        'net_assets', 'equity_parent', 'shareholders_equity',
+    ]
+    return {k: parsed_data.get(k) for k in keys if parsed_data.get(k) is not None}
 
 
 def fetch_company_financials(code_4, days=90, progress_callback=None, use_cache=True):

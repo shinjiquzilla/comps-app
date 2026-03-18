@@ -36,7 +36,7 @@ PERIOD_MAP = {
 CACHE_BASE = Path(__file__).parent / "data" / "edinet"
 
 
-def search_and_download(code_4: str, period: str = "1year", cache_dir: Path | None = None):
+def search_and_download(code_4: str, period: str = "1year", cache_dir: Path | None = None, max_yuho: int = 1):
     """
     EDINET Web UIから証券コードで検索し、有報・半報のCSV ZIPをダウンロード。
 
@@ -44,12 +44,13 @@ def search_and_download(code_4: str, period: str = "1year", cache_dir: Path | No
         code_4: 4桁証券コード
         period: 検索期間キー（PERIOD_MAP参照）
         cache_dir: 保存先ディレクトリ（デフォルト: data/edinet/{code}/）
+        max_yuho: ダウンロードする有報の最大件数（デフォルト1、複数年度取得時は2）
 
     Returns:
         list[dict]: ダウンロードした書類のリスト
             [{"doc_type": "yuho"|"hanki"|"quarterly", "date": "2025/06/19",
               "title": "有価証券報告書...", "period_end": "2025-03-31",
-              "zip_path": Path, "zip_bytes": bytes}]
+              "zip_path": Path}]
     """
     from playwright.sync_api import sync_playwright
 
@@ -116,13 +117,24 @@ def search_and_download(code_4: str, period: str = "1year", cache_dir: Path | No
             browser.close()
             return results
 
-        print(f"[EDINET] {len(doc_rows)}件の書類を検出")
+        # 有報を period_end 降順ソートし max_yuho 件に絞る
+        yuho_rows = [d for d in doc_rows if d["doc_type"] == "yuho"]
+        other_rows = [d for d in doc_rows if d["doc_type"] != "yuho"]
+        yuho_rows.sort(key=lambda d: d.get("period_end", ""), reverse=True)
+        yuho_rows = yuho_rows[:max_yuho]
+        doc_rows = yuho_rows + other_rows
+
+        print(f"[EDINET] {len(doc_rows)}件の書類を検出（有報{len(yuho_rows)}件）")
 
         # 各書類のCSVをダウンロード
         for doc in doc_rows:
             doc_type = doc["doc_type"]
             period_end = doc["period_end"]
-            filename = f"{doc_type}_{code_4}.zip"
+            # 有報で複数件の場合は period_end を含むファイル名で区別
+            if doc_type == "yuho" and max_yuho > 1 and period_end:
+                filename = f"{doc_type}_{period_end}_{code_4}.zip"
+            else:
+                filename = f"{doc_type}_{code_4}.zip"
 
             print(f"  DL: {doc['title'][:60]}...")
             try:
@@ -132,7 +144,7 @@ def search_and_download(code_4: str, period: str = "1year", cache_dir: Path | No
 
                 zip_path = cache_dir / filename
                 download.save_as(str(zip_path))
-                zip_bytes = zip_path.read_bytes()
+                zip_size = zip_path.stat().st_size
 
                 results.append({
                     "doc_type": doc_type,
@@ -140,9 +152,8 @@ def search_and_download(code_4: str, period: str = "1year", cache_dir: Path | No
                     "title": doc["title"],
                     "period_end": period_end,
                     "zip_path": zip_path,
-                    "zip_bytes": zip_bytes,
                 })
-                print(f"    -> {zip_path.name} ({len(zip_bytes):,} bytes)")
+                print(f"    -> {zip_path.name} ({zip_size:,} bytes)")
 
                 # 次のDLの前に少し待つ
                 page.wait_for_timeout(500)
@@ -211,7 +222,7 @@ def download_and_parse(code_4: str, period: str = "1year"):
 
     for doc in docs:
         doc_type = doc["doc_type"]
-        zip_bytes = doc["zip_bytes"]
+        zip_bytes = doc["zip_path"].read_bytes()
 
         if doc_type == "yuho":
             data = extract_financial_data(zip_bytes)
