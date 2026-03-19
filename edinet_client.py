@@ -354,7 +354,7 @@ def search_documents_batch(session, api_key, sec_codes_5, days=90, doc_types=Non
                 found[sc].append(doc)
 
         current += timedelta(days=1)
-        time.sleep(1)
+        time.sleep(0.3)
 
     return found
 
@@ -969,7 +969,7 @@ def _process_docs_for_company(session, api_key, code_4, docs, use_cache=True):
                             debug_info['hanki_supabase'] = True
                 continue
             zip_bytes = download_csv_zip(session, api_key, doc_id)
-            time.sleep(1)
+            time.sleep(0.3)
             # キャッシュに保存
             if cache_dir and zip_bytes:
                 (cache_dir / zip_filename).write_bytes(zip_bytes)
@@ -1015,7 +1015,7 @@ def _process_docs_for_company(session, api_key, code_4, docs, use_cache=True):
             if not pdf_path.exists():
                 try:
                     pdf_bytes = download_pdf(session, api_key, doc_id)
-                    time.sleep(1)
+                    time.sleep(0.3)
                     if pdf_bytes:
                         pdf_path.write_bytes(pdf_bytes)
                 except Exception:
