@@ -177,6 +177,7 @@ def extract_profile_from_edinet(code_4, use_cache=True):
 
     # CSV行を取得
     lines = parse_csv_lines(zip_bytes)
+    del zip_bytes  # Free memory immediately
     if not lines:
         return {}
 
@@ -379,6 +380,104 @@ def fetch_stock_history(code_4, days=365):
         return []
 
 
+def fetch_topix_history(days=365):
+    """
+    TOPIX 1年分の日次データを取得（インデックスチャート用）。J-Quants API を使用。
+    全社共通なのでファイルキャッシュ（24h TTL）。
+
+    Returns:
+        list of (date_str, close_price) or empty list
+    """
+    try:
+        import requests as req
+        import urllib3
+        import time
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        end = date.today()
+        start = end - timedelta(days=days)
+        from_str = start.strftime("%Y-%m-%d")
+        to_str = end.strftime("%Y-%m-%d")
+
+        # ファイルキャッシュ（24h TTL）
+        cache_dir = CACHE_BASE.parent / "topix"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / f"topix_{from_str}_{to_str}.json"
+        if cache_file.exists():
+            age_hours = (time.time() - cache_file.stat().st_mtime) / 3600
+            if age_hours < 24:
+                try:
+                    data = json.loads(cache_file.read_text(encoding="utf-8"))
+                    if data:
+                        print(f"  [TOPIX] キャッシュヒット: {len(data)}日分")
+                        return data
+                except Exception:
+                    pass
+
+        # J-Quants API key を取得
+        api_key = None
+        try:
+            secrets_path = Path(__file__).parent / ".streamlit" / "secrets.toml"
+            if secrets_path.exists():
+                text = secrets_path.read_text(encoding="utf-8")
+                in_jquants = False
+                for line in text.split("\n"):
+                    if line.strip() == "[jquants]":
+                        in_jquants = True
+                        continue
+                    if line.strip().startswith("[") and in_jquants:
+                        break
+                    if in_jquants and "api_key" in line and "=" in line:
+                        api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+        except Exception:
+            pass
+
+        if not api_key:
+            api_key = os.environ.get("JQUANTS_API_KEY", "")
+
+        if not api_key:
+            print("  [TOPIX] J-Quants API key なし")
+            return []
+
+        headers = {"x-api-key": api_key}
+        url = "https://api.jquants.com/v2/indices/bars/daily/topix"
+        params = {"from": from_str, "to": to_str}
+
+        all_bars = []
+        while True:
+            resp = req.get(url, headers=headers, params=params, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            bars = data.get("data") or []
+            all_bars.extend(bars)
+            pagination_key = data.get("pagination_key")
+            if not pagination_key:
+                break
+            params["pagination_key"] = pagination_key
+
+        if not all_bars:
+            return []
+
+        result = []
+        for bar in all_bars:
+            d = bar.get("Date", "")
+            close = bar.get("C")
+            if d and close is not None:
+                result.append([d, float(close)])
+
+        # キャッシュ保存
+        try:
+            cache_file.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+        print(f"  [TOPIX] {len(result)}日分取得")
+        return result
+    except Exception as e:
+        print(f"  [TOPIX] 取得失敗: {e}")
+        return []
+
+
 def collect_profile_data(code_4, company_name_ja=None, company_url="", use_cache=True):
     """
     全ソースを統合してプロファイルデータを収集。
@@ -455,7 +554,7 @@ def collect_profile_data(code_4, company_name_ja=None, company_url="", use_cache
     jquants_data = None
     try:
         from jquants_client import fetch_fins_summary
-        jquants_data = fetch_fins_summary(code_4)
+        jquants_data = fetch_fins_summary(code_4, use_cache=use_cache)
         if jquants_data:
             print(f"  [J-Quants] データ取得成功")
     except Exception as e:
@@ -485,6 +584,16 @@ def collect_profile_data(code_4, company_name_ja=None, company_url="", use_cache
     except Exception as e:
         print(f"  [EDINET Financial] 取得失敗: {e}")
 
+    # 6b. EDINET 複数年度財務データ（D&A・BS 過年度取得）
+    edinet_multi_year = {}
+    try:
+        from edinet_client import fetch_multi_year_financials
+        edinet_multi_year = fetch_multi_year_financials(code_4, use_cache=True)
+        if edinet_multi_year:
+            print(f"  [EDINET Multi-Year] {len(edinet_multi_year)}年度分取得")
+    except Exception as e:
+        print(f"  [EDINET Multi-Year] 取得失敗: {e}")
+
     # 7. build_company_data で統合計算
     company_data = None
     try:
@@ -495,6 +604,7 @@ def collect_profile_data(code_4, company_name_ja=None, company_url="", use_cache
             {'forecast': {}},
             stock_data,
             jquants_data=jquants_data,
+            edinet_multi_year=edinet_multi_year,
         )
         print(f"  [Financial] build_company_data 成功")
     except Exception as e:
@@ -504,6 +614,9 @@ def collect_profile_data(code_4, company_name_ja=None, company_url="", use_cache
     stock_history = fetch_stock_history(code_4)
     if stock_history:
         print(f"  [株価履歴] {len(stock_history)}日分取得")
+
+    # 8b. TOPIX履歴（インデックスチャート用）
+    topix_history = fetch_topix_history()
 
     # 9. 統合
     # 英語社名: JPX master → stock_data → web_data → 日本語名にフォールバック
@@ -525,8 +638,10 @@ def collect_profile_data(code_4, company_name_ja=None, company_url="", use_cache
     # EDINET → web_data フォールバック（headquarters, founding_year）
     if web_data is None:
         web_data = {}
-    if not web_data.get('headquarters') and edinet_profile.get('headquarters'):
-        web_data['headquarters'] = edinet_profile['headquarters']
+    # Headquarters: always use EDINET (official registered address)
+    edinet_hq = edinet_profile.get('headquarters', '')
+    if edinet_hq:
+        web_data['headquarters'] = edinet_hq
     if not web_data.get('founding_year') and edinet_profile.get('company_history'):
         import re as _re
         _m = _re.search(r'(19\d{2}|20[0-2]\d)年.*?(設立|創立|創業)', edinet_profile['company_history'])
@@ -554,9 +669,118 @@ def collect_profile_data(code_4, company_name_ja=None, company_url="", use_cache
 
         # Stock history for chart
         'stock_history': stock_history,
+
+        # TOPIX history for indexed chart
+        'topix_history': topix_history,
     }
 
     return profile
+
+
+def extract_narrative_from_edinet(code_4, use_cache=True):
+    """
+    有報から経営成績・業績概要のナラティブテキストを抽出。
+    Comps outlier 正規化で one-time item 特定に使用。
+
+    Returns:
+        str: ナラティブテキスト（最大8000文字）
+    """
+    cache_dir = CACHE_BASE / str(code_4)
+    narrative_cache = cache_dir / "narrative_parsed.json"
+
+    # キャッシュ確認
+    if use_cache and narrative_cache.exists():
+        try:
+            data = json.loads(narrative_cache.read_text(encoding="utf-8"))
+            if data and data.get("narrative"):
+                print(f"  [EDINET Narrative] キャッシュヒット: {narrative_cache}")
+                return data["narrative"]
+        except Exception:
+            pass
+
+    # 有報ZIPを探す
+    yuho_zip = None
+    if cache_dir.exists():
+        for f in sorted(cache_dir.glob("yuho_*.zip"), reverse=True):
+            yuho_zip = f
+            break
+
+    if not yuho_zip:
+        # Playwright で EDINET から自動ダウンロード
+        try:
+            from edinet_scraper import search_and_download
+            from playwright.sync_api import sync_playwright as _pw_check
+            import concurrent.futures
+            print(f"  [EDINET Narrative] Playwright で有報DL中: {code_4}")
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+            def _download():
+                return search_and_download(code_4, period="1year", cache_dir=cache_dir)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_download)
+                docs = future.result(timeout=120)
+
+            for doc in docs:
+                if doc['doc_type'] == 'yuho':
+                    yuho_zip = doc['zip_path']
+                    break
+        except Exception as e:
+            print(f"  [EDINET Narrative] Playwright DL失敗: {e}")
+
+    if not yuho_zip:
+        print(f"  [EDINET Narrative] 有報ZIPが見つかりません: {code_4}")
+        return ""
+
+    print(f"  [EDINET Narrative] 有報パース中: {yuho_zip.name}")
+    zip_bytes = yuho_zip.read_bytes()
+    lines = parse_csv_lines(zip_bytes)
+    del zip_bytes  # Free memory immediately
+    if not lines:
+        return ""
+
+    # ナラティブ要素の候補ID
+    narrative_element_ids = [
+        'jpcrp_cor:OverviewOfBusinessResultsEtcTextBlock',
+        'jpcrp_cor:AnalysisOfFinancialPositionOperatingResultsAndCashFlowsTextBlock',
+        'jpcrp_cor:BusinessResultsOfReportingCompanyTextBlock',
+        'jpcrp_cor:OverviewAndAnalysisOfBusinessResultsTextBlock',
+    ]
+
+    narratives = []
+    for line in lines[1:]:
+        parts = line.split('\t')
+        if len(parts) < 9:
+            continue
+
+        element_id = parts[0].strip().strip('"').strip()
+        value_str = parts[8].strip().strip('"').strip()
+
+        if not value_str or element_id not in narrative_element_ids:
+            continue
+
+        # HTMLタグ除去
+        clean_text = re.sub(r'<[^>]+>', '', value_str)
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+        if len(clean_text) > 100:  # 短すぎるものは除外
+            narratives.append(clean_text)
+
+    # 結合して8000文字に切り詰め
+    narrative = "\n\n".join(narratives)[:8000]
+    print(f"  [EDINET Narrative] 抽出テキスト: {len(narrative)}文字")
+
+    # キャッシュ保存
+    if use_cache and narrative:
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            narrative_cache.write_text(
+                json.dumps({"code": code_4, "narrative": narrative}, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+    return narrative
 
 
 if __name__ == "__main__":

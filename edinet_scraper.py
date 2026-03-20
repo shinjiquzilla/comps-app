@@ -63,105 +63,105 @@ def search_and_download(code_4: str, period: str = "1year", cache_dir: Path | No
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(accept_downloads=True)
-        page = context.new_page()
+        try:
+            context = browser.new_context(accept_downloads=True)
+            page = context.new_page()
 
-        print(f"[EDINET] {code_4} を検索中（期間: {period}）...")
-        page.goto(EDINET_URL, timeout=30000)
+            print(f"[EDINET] {code_4} を検索中（期間: {period}）...")
+            page.goto(EDINET_URL, timeout=30000)
 
-        # 検索条件
-        page.fill("#W0018vD_KEYWORD", code_4)
-        page.select_option("#W0018vD_KIKAN", period_val)
+            # 検索条件
+            page.fill("#W0018vD_KEYWORD", code_4)
+            page.select_option("#W0018vD_KIKAN", period_val)
 
-        # 有報/半報/四半期報告書チェック（デフォルトONだが確実に）
-        chk = page.query_selector("#W0018vCHKSYORUI1")
-        if chk and not chk.is_checked():
-            chk.check()
+            # 有報/半報/四半期報告書チェック（デフォルトONだが確実に）
+            chk = page.query_selector("#W0018vCHKSYORUI1")
+            if chk and not chk.is_checked():
+                chk.check()
 
-        # 検索実行
-        page.click("#W0018BTNBTN_SEARCH")
-        page.wait_for_load_state("networkidle", timeout=15000)
+            # 検索実行
+            page.click("#W0018BTNBTN_SEARCH")
+            page.wait_for_load_state("networkidle", timeout=15000)
 
-        # 結果テーブルを解析
-        rows = page.query_selector_all("table tr")
-        doc_rows = []
-        for row in rows:
-            cells = row.query_selector_all("td")
-            if len(cells) < 8:
-                continue
-            date_text = cells[0].inner_text().strip()
-            doc_text = cells[1].inner_text().strip()
-            if "報告書" not in doc_text:
-                continue
+            # 結果テーブルを解析
+            rows = page.query_selector_all("table tr")
+            doc_rows = []
+            for row in rows:
+                cells = row.query_selector_all("td")
+                if len(cells) < 8:
+                    continue
+                date_text = cells[0].inner_text().strip()
+                doc_text = cells[1].inner_text().strip()
+                if "報告書" not in doc_text:
+                    continue
 
-            # CSV ボタンを探す
-            csv_cell = cells[7]  # CSV列
-            csv_links = csv_cell.query_selector_all("a")
-            if not csv_links:
-                continue
+                # CSV ボタンを探す
+                csv_cell = cells[7]  # CSV列
+                csv_links = csv_cell.query_selector_all("a")
+                if not csv_links:
+                    continue
 
-            # 書類種別判定
-            doc_type = _classify_doc(doc_text)
-            period_end = _extract_period_end(doc_text)
+                # 書類種別判定
+                doc_type = _classify_doc(doc_text)
+                period_end = _extract_period_end(doc_text)
 
-            doc_rows.append({
-                "date": date_text,
-                "title": doc_text,
-                "doc_type": doc_type,
-                "period_end": period_end,
-                "csv_link": csv_links[0],
-            })
-
-        if not doc_rows:
-            print(f"[EDINET] {code_4}: 検索結果なし")
-            browser.close()
-            return results
-
-        # 有報を period_end 降順ソートし max_yuho 件に絞る
-        yuho_rows = [d for d in doc_rows if d["doc_type"] == "yuho"]
-        other_rows = [d for d in doc_rows if d["doc_type"] != "yuho"]
-        yuho_rows.sort(key=lambda d: d.get("period_end", ""), reverse=True)
-        yuho_rows = yuho_rows[:max_yuho]
-        doc_rows = yuho_rows + other_rows
-
-        print(f"[EDINET] {len(doc_rows)}件の書類を検出（有報{len(yuho_rows)}件）")
-
-        # 各書類のCSVをダウンロード
-        for doc in doc_rows:
-            doc_type = doc["doc_type"]
-            period_end = doc["period_end"]
-            # 有報で複数件の場合は period_end を含むファイル名で区別
-            if doc_type == "yuho" and max_yuho > 1 and period_end:
-                filename = f"{doc_type}_{period_end}_{code_4}.zip"
-            else:
-                filename = f"{doc_type}_{code_4}.zip"
-
-            print(f"  DL: {doc['title'][:60]}...")
-            try:
-                with page.expect_download(timeout=30000) as dl_info:
-                    doc["csv_link"].click()
-                download = dl_info.value
-
-                zip_path = cache_dir / filename
-                download.save_as(str(zip_path))
-                zip_size = zip_path.stat().st_size
-
-                results.append({
+                doc_rows.append({
+                    "date": date_text,
+                    "title": doc_text,
                     "doc_type": doc_type,
-                    "date": doc["date"],
-                    "title": doc["title"],
                     "period_end": period_end,
-                    "zip_path": zip_path,
+                    "csv_link": csv_links[0],
                 })
-                print(f"    -> {zip_path.name} ({zip_size:,} bytes)")
 
-                # 次のDLの前に少し待つ
-                page.wait_for_timeout(500)
+            if not doc_rows:
+                print(f"[EDINET] {code_4}: 検索結果なし")
+                return results
 
-            except Exception as e:
-                print(f"    DL失敗: {e}")
+            # 有報を period_end 降順ソートし max_yuho 件に絞る
+            yuho_rows = [d for d in doc_rows if d["doc_type"] == "yuho"]
+            other_rows = [d for d in doc_rows if d["doc_type"] != "yuho"]
+            yuho_rows.sort(key=lambda d: d.get("period_end", ""), reverse=True)
+            yuho_rows = yuho_rows[:max_yuho]
+            doc_rows = yuho_rows + other_rows
 
-        browser.close()
+            print(f"[EDINET] {len(doc_rows)}件の書類を検出（有報{len(yuho_rows)}件）")
+
+            # 各書類のCSVをダウンロード
+            for doc in doc_rows:
+                doc_type = doc["doc_type"]
+                period_end = doc["period_end"]
+                # 有報で複数件の場合は period_end を含むファイル名で区別
+                if doc_type == "yuho" and max_yuho > 1 and period_end:
+                    filename = f"{doc_type}_{period_end}_{code_4}.zip"
+                else:
+                    filename = f"{doc_type}_{code_4}.zip"
+
+                print(f"  DL: {doc['title'][:60]}...")
+                try:
+                    with page.expect_download(timeout=30000) as dl_info:
+                        doc["csv_link"].click()
+                    download = dl_info.value
+
+                    zip_path = cache_dir / filename
+                    download.save_as(str(zip_path))
+                    zip_size = zip_path.stat().st_size
+
+                    results.append({
+                        "doc_type": doc_type,
+                        "date": doc["date"],
+                        "title": doc["title"],
+                        "period_end": period_end,
+                        "zip_path": zip_path,
+                    })
+                    print(f"    -> {zip_path.name} ({zip_size:,} bytes)")
+
+                    # 次のDLの前に少し待つ
+                    page.wait_for_timeout(500)
+
+                except Exception as e:
+                    print(f"    DL失敗: {e}")
+        finally:
+            browser.close()
 
     # メタデータ保存
     meta = {
@@ -226,6 +226,7 @@ def download_and_parse(code_4: str, period: str = "1year"):
 
         if doc_type == "yuho":
             data = extract_financial_data(zip_bytes)
+            del zip_bytes
             parsed["yuho"] = data
             # Save parsed
             out = CACHE_BASE / code_4 / "yuho_parsed.json"
@@ -234,6 +235,7 @@ def download_and_parse(code_4: str, period: str = "1year"):
 
         elif doc_type == "hanki":
             data = extract_financial_data(zip_bytes, include_prior=True)
+            del zip_bytes
             parsed["hanki"] = data
             out = CACHE_BASE / code_4 / "hanki_parsed.json"
             out.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -244,6 +246,7 @@ def download_and_parse(code_4: str, period: str = "1year"):
 
         elif doc_type.startswith("quarterly"):
             data = extract_financial_data(zip_bytes, include_prior=True)
+            del zip_bytes
             parsed[doc_type] = data
             out = CACHE_BASE / code_4 / f"{doc_type}_parsed.json"
             out.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
